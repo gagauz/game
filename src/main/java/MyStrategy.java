@@ -1,11 +1,22 @@
-import model.*;
-
-import static java.lang.Math.*;
+import static java.lang.Math.PI;
+import static java.lang.Math.abs;
+import static java.lang.Math.pow;
+import static java.lang.Math.round;
+import static java.lang.Math.sqrt;
+import model.Car;
+import model.Direction;
+import model.Game;
+import model.Move;
+import model.TileType;
+import model.World;
 
 public final class MyStrategy implements Strategy {
 
-    private static final double ANGLE_90 = 1.5708;
-    private static final double ANGLE_45 = 1.5708 / 2;
+    private static final double ANGLE_360 = 2 * PI;
+    private static final double ANGLE_180 = PI;
+    private static final double ANGLE_90 = PI / 2;
+    private static final double ANGLE_89 = ANGLE_90 / 90 * 89;
+    private static final double ANGLE_45 = PI / 4;
 
     private Car self;
     private World world;
@@ -27,6 +38,7 @@ public final class MyStrategy implements Strategy {
 
     private Delegate delegate;
     private TileType lastTile = TileType.EMPTY;
+    private TileType nextTile = TileType.EMPTY;
 
     Direction getDirection() {
         if (self.getAngle() >= -ANGLE_45 && self.getAngle() < ANGLE_45) {
@@ -50,6 +62,7 @@ public final class MyStrategy implements Strategy {
         this.world = world;
         this.game = game;
         this.move = move;
+        this.nextTile = getNext();
 
         //        for (int x = 0; x < world.getTilesXY().length; x++) {
         //            for (int y = 0; y < world.getTilesXY()[x].length; y++) {
@@ -95,16 +108,17 @@ public final class MyStrategy implements Strategy {
     }
 
     boolean isStale() {
-        return (deltaSpeed() < 0.0001 && deltaMove() < 0.0001) && tickTr > 20;
+        if ((deltaSpeed() < 0.0001 && deltaMove() < 0.0001) && tickTr > 20) {
+            System.exit(1);
+            return true;
+        }
+        return false;
     }
 
     void checkTurn() {
-        TileType tt = getNext();
-
-        if (tt != lastTile) {
-            System.out.println("-" + lastTile + " -> " + tt);
-            enableCenter = true;
-            if (tt == TileType.LEFT_TOP_CORNER) {
+        if (nextTile != lastTile) {
+            System.out.println("" + lastTile + " -> " + nextTile);
+            if (nextTile == TileType.LEFT_TOP_CORNER) {
                 if (lastTile == TileType.VERTICAL && self.getSpeedY() < 0) {
                     delegate = new TurnRight();
                 }
@@ -113,7 +127,7 @@ public final class MyStrategy implements Strategy {
                 }
             }
 
-            if (tt == TileType.RIGHT_TOP_CORNER) {
+            if (nextTile == TileType.RIGHT_TOP_CORNER) {
                 if (lastTile == TileType.HORIZONTAL && self.getSpeedX() > 0) {
                     delegate = new TurnRight();
                 }
@@ -122,7 +136,7 @@ public final class MyStrategy implements Strategy {
                 }
             }
 
-            if (tt == TileType.RIGHT_BOTTOM_CORNER) {
+            if (nextTile == TileType.RIGHT_BOTTOM_CORNER) {
                 if (lastTile == TileType.VERTICAL && self.getSpeedY() > 0) {
                     delegate = new TurnRight();
                 }
@@ -131,7 +145,7 @@ public final class MyStrategy implements Strategy {
                 }
             }
 
-            if (tt == TileType.LEFT_BOTTOM_CORNER) {
+            if (nextTile == TileType.LEFT_BOTTOM_CORNER) {
                 if (lastTile == TileType.HORIZONTAL && self.getSpeedX() < 0) {
                     delegate = new TurnRight();
                 }
@@ -139,7 +153,8 @@ public final class MyStrategy implements Strategy {
                     delegate = new TurnLeft();
                 }
             }
-            lastTile = tt;
+
+            lastTile = nextTile;
         }
     }
 
@@ -159,7 +174,23 @@ public final class MyStrategy implements Strategy {
         return false;
     }
 
+    void checkStraight() {
+        double a = correct(self.getAngle());
+        double d = a;
+        if (nextTile == TileType.HORIZONTAL) {
+            d = between(a, -ANGLE_90, ANGLE_90) ? 0 : ANGLE_180;
+        } else if (nextTile == TileType.VERTICAL) {
+            d = between(a, 0, ANGLE_180) ? ANGLE_90 : -ANGLE_90;
+        }
+        double c = correct(d - a);
+        if (c != 0) {
+            System.out.println("Move wheel to " + c + ", a=" + a + ", d=" + d);
+            move.setWheelTurn(2 * c);
+        }
+    }
+
     void checkCenter() {
+        /*
         if (!checkClose()) {
             System.out.println("Center");
             double w2 = game.getTrackTileSize() / 2;
@@ -183,6 +214,7 @@ public final class MyStrategy implements Strategy {
                 }
             }
         }
+        */
     }
 
     TileType getNext() {
@@ -207,9 +239,9 @@ public final class MyStrategy implements Strategy {
 
         @Override
         public void move() {
-            move.setEnginePower(1);
+            move.setEnginePower(1.0);
             checkTurn();
-            checkCenter();
+            checkStraight();
             if (isStale()) {
                 System.out.println("Detect stale : Dm=" + deltaMove() + ", Ds=" + deltaSpeed());
                 print();
@@ -269,10 +301,14 @@ public final class MyStrategy implements Strategy {
     }
 
     abstract class Turn implements Delegate {
+
+        double needAngle;
+
         Turn() {
             tickTr = 0;
-            turnAngleBegin = self.getAngle();
-            System.out.println("New turn " + this.getClass());
+            turnAngleBegin = closestAngle(self.getAngle());
+            needAngle = turnAngleBegin + get() * ANGLE_90;
+            System.out.println("New turn " + this.getClass() + " from angle: " + turnAngleBegin + " to angle: " + needAngle);
         }
 
         abstract double get();
@@ -281,13 +317,11 @@ public final class MyStrategy implements Strategy {
         public void move() {
             move.setEnginePower(1.0);
 
-            double d = self.getAngle() - turnAngleBegin;
-
-            if (abs(d) >= ANGLE_90) {
-                System.out.println("Angle id " + (self.getAngle() - turnAngleBegin) + " stop turn");
+            double delta = self.getAngle() - turnAngleBegin;
+            if (abs(delta) >= ANGLE_89) {
+                System.out.println("Angle is " + self.getAngle() + ", delta is " + delta + " stop turn");
+                nextTile = getNext();
                 delegate = new MoveForward();
-            } else if (abs(d) >= ANGLE_45) {
-                move.setWheelTurn(get() * d / ANGLE_90);
             } else {
                 move.setWheelTurn(get());
             }
@@ -300,4 +334,35 @@ public final class MyStrategy implements Strategy {
         }
     }
 
+    public double closestAngle(double angle) {
+        if (between(angle, -ANGLE_45, ANGLE_45)) {
+            return 0;
+        }
+        if (between(angle, ANGLE_45, ANGLE_90 + ANGLE_45)) {
+            return ANGLE_90;
+        }
+        if (between(angle, -ANGLE_180 + ANGLE_45, -ANGLE_45)) {
+            return -ANGLE_90;
+        }
+        return ANGLE_180;
+    }
+
+    double correctDelta(double a1, double a2) {
+        if (a1 < 0)
+            a1 = a1 + ANGLE_360;
+        if (a2 < 0)
+            a2 = a2 + ANGLE_360;
+        return a1 - a2;
+    }
+
+    double correct(double a) {
+        if (a > ANGLE_180) {
+            return a - ANGLE_360;
+        }
+        return a;
+    }
+
+    boolean between(double v1, double v2, double v3) {
+        return v1 > v2 && v1 < v3;
+    }
 }
