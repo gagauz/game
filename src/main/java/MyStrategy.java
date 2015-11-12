@@ -1,24 +1,46 @@
-import model.*;
-
-import static java.lang.Math.*;
-import static model.Direction.*;
-import static model.TileType.*;
+import static java.lang.Math.PI;
+import static java.lang.Math.abs;
+import static java.lang.Math.pow;
+import static java.lang.Math.round;
+import static java.lang.Math.sqrt;
+import static model.Direction.DOWN;
+import static model.Direction.LEFT;
+import static model.Direction.RIGHT;
+import static model.Direction.UP;
+import static model.TileType.BOTTOM_HEADED_T;
+import static model.TileType.EMPTY;
+import static model.TileType.LEFT_BOTTOM_CORNER;
+import static model.TileType.LEFT_HEADED_T;
+import static model.TileType.LEFT_TOP_CORNER;
+import static model.TileType.RIGHT_BOTTOM_CORNER;
+import static model.TileType.RIGHT_HEADED_T;
+import static model.TileType.RIGHT_TOP_CORNER;
+import static model.TileType.TOP_HEADED_T;
+import model.Bonus;
+import model.Car;
+import model.Direction;
+import model.Game;
+import model.Move;
+import model.TileType;
+import model.World;
 
 public final class MyStrategy implements Strategy {
 
     static double insideTurnFactor = 1.0;//0..1
-    static double outsideTurnFactor = 1.0;//0..1
-    static double straightFactor = 0.0020;
+    static double outsideTurnFactor = 1;//0..1
+    static double straightFactor = 0.002;
 
     static double turnMaxSpeed = 15;
+    static double driftSpeed = 28;
     static boolean canNitro = true;
     static int staleTickCount = 50;
     static double staleSpeedValue = 0.1;
     static double staleMoveValue = 1;
-    static double turnRadiusFactor = 1.0;
+    static double turnRadiusFactor = 3;
+    static double maxSpd = 1000;
+    static double margins = 80;
 
     private static final double[] OFFSET = new double[] {1, -1, -1, 1};
-    private static final double[] DIR = new double[] {-1, 1, -1, 1};
 
     private static final double[][] OFFS_ANGLE_SIGN = new double[][] {
             //LEFT //RIGHT //UP //DOWN
@@ -63,6 +85,7 @@ public final class MyStrategy implements Strategy {
     private static final double ANGLE_180 = PI;
     private static final double ANGLE_90 = PI / 2;
     private static final double ANGLE_80 = ANGLE_90 / 90 * 80;
+    private static final double ANGLE_60 = PI / 3;
     private static final double ANGLE_45 = PI / 4;
     private static final double ANGLE_15 = PI / 12;
 
@@ -139,6 +162,7 @@ public final class MyStrategy implements Strategy {
         if (null == direction) {
             direction = world.getStartingDirection();
             staleMoveDelay = (int) (1.0 / game.getCarWheelTurnChangePerTick());
+            margins = game.getTrackTileMargin();
         }
 
         double speed0 = sqrt(pow(self.getSpeedX(), 2) + pow(self.getSpeedY(), 2));
@@ -169,6 +193,10 @@ public final class MyStrategy implements Strategy {
             nitroOn = false;
         }
         //        System.out.println("X=" + self.getX() + ", Y=" + self.getY() + ", A=" + self.getAngle() + ", Vx=" + self.getSpeedX() + ", Vy=" + self.getSpeedY());
+        if (speed > maxSpd) {
+            move.setEnginePower(0.1);
+        }
+        //        checkMargins();
     }
 
     double deltaSpeed() {
@@ -207,11 +235,13 @@ public final class MyStrategy implements Strategy {
         if (staleOn)
             return;
 
+        int tileAhead = speed > driftSpeed ? 2 : 1;
+
         // TODO Если ускорение - искать раньше 
         if (turning)
             nextTile = getNextTileOf(currentTurn.tileX, currentTurn.tileY, 1);
         else
-            nextTile = getNextTile(speed > turnMaxSpeed * 2.5 ? 2 : 1);
+            nextTile = getNextTile(tileAhead);
 
         if (nextTile != lastTile) {
             double offs = getCenterOffset() * TURN_ANGLE_OUT[direction.ordinal()][getNextTurn().direction.ordinal()];
@@ -221,24 +251,26 @@ public final class MyStrategy implements Strategy {
 
             double offsAngle = getOffsetAngle();
 
-            if (offs > 0) {
-                //Фактор скорости
-                start += speed / turnMaxSpeed * tileSize * speed * (speed > turnMaxSpeed * 2.5 ? 2 : 0.01);
-                //Фактор смещения
-                start -= offs * 3.0;
-                //Фактор угла вхождения в поворот
-                start -= offsAngle * OFFS_ANGLE_SIGN[direction.ordinal()][getNextTurn().direction.ordinal()] * 5.0;
-            }
+            //Фактор скорости
+            double spdFact = speed / turnMaxSpeed * tileSize * (speed - 0.7 * turnMaxSpeed) / turnMaxSpeed * 3;
+            if (spdFact > 0)
+                start += spdFact;
+            //Фактор смещения
+            start -= offs * 2.0;
+            //Фактор угла вхождения в поворот
+            start -= -offsAngle * OFFS_ANGLE_SIGN[direction.ordinal()][getNextTurn().direction.ordinal()] * 2.0;
 
             if (cx == currentTurn.tileX && cy == currentTurn.tileY) {
-                start = tileSize * 1000;
+                start = 1;
+                dist = 0;
             }
 
             if (dist < start) {
 
-                System.out.println("Turn: " + lastTile + " -> " + nextTile);
                 Direction dir = resolveDirectionAfterNextTurn(nextTile);
                 if (null != dir && dir != direction) {
+                    System.out.println("Turn detected: dir=" + direction + ", next dir=" + dir + ", lastTile=" + lastTile + " nextTile= " + nextTile
+                            + ", start=" + start + ", dist=" + dist + ", speed=" + speed + ", tileAhead=" + tileAhead + ", turning=" + turning);
                     if (isUp()) {
                         if (RIGHT == dir)
                             delegate = new TurnRight();
@@ -283,7 +315,7 @@ public final class MyStrategy implements Strategy {
 
     void checkStraight() {
         if (!turning) {
-            double delta1 = 2 * getOffsetAngle();
+            double delta1 = 3 * getOffsetAngle();
 
             double offset = getCenterOffset();
             //            System.out.println("Dir " + direction + " need=" + need + ", real=" + real + " OF " + DIR[direction.ordinal()]);
@@ -293,7 +325,7 @@ public final class MyStrategy implements Strategy {
 
             delta1 += delta2;
             //            move.setEnginePower(0.2 + abs(ANGLE_90 - abs(offset)) / ANGLE_90);
-            move.setWheelTurn(move.getWheelTurn() + delta1);
+            move.setWheelTurn(delta1);
         }
     }
 
@@ -371,11 +403,13 @@ public final class MyStrategy implements Strategy {
     double getOffsetAngle() {
         double need = getRightAngle();
         double real = self.getAngle();
-        if (need == ANGLE_180 && real < 0)
-            need = -need;
+        if (need == ANGLE_180) {
+            need = 0;
+            real = real + (real > 0 ? -ANGLE_180 : ANGLE_180);
+        }
 
         double offsAngle = (need - real);
-        return offsAngle * OFFS_ANGLE_SIGN[direction.ordinal()][getNextTurn().direction.ordinal()];
+        return offsAngle;
     }
 
     class MoveBackward implements Delegate {
@@ -388,10 +422,10 @@ public final class MyStrategy implements Strategy {
             turning = false;
             moveBackBeginX = self.getX();
             moveBackBeginY = self.getY();
-            System.out.println("Begin move backward");
+            System.out.println("Begin move backward dir: " + direction + " angle:" + self.getAngle());
             move.setEnginePower(0);
             countDownMove1 = staleMoveDelay;
-            countDownMove2 = staleMoveDelay;
+            countDownMove2 = 2 * staleMoveDelay;
         }
 
         @Override
@@ -402,7 +436,7 @@ public final class MyStrategy implements Strategy {
             }
             double offsAngle = getOffsetAngle() / ANGLE_90;
 
-            if (deltaBack() < tileSize * 0.2) {
+            if (deltaBack() < tileSize * 0.4) {
                 move.setWheelTurn(-offsAngle);
                 if (countDownMove1 <= 0)
                     move.setEnginePower(-1.0D);
@@ -471,6 +505,42 @@ public final class MyStrategy implements Strategy {
         return false;
     }
 
+    void checkMargins() {
+        if (turning)
+            return;
+        double correction = 0.2;
+        double dR = self.getX() + self.getWidth() / 2;
+        double dL = self.getX() - self.getWidth() / 2;
+        double dU = self.getY() - self.getWidth() / 2;
+        double dD = self.getY() + self.getWidth() / 2;
+        double mR = (cx + 1) * tileSize - game.getTrackTileMargin();
+        double mL = cx * tileSize + game.getTrackTileMargin();
+        double mU = cy * self.getY() + game.getTrackTileMargin();
+        double mD = (cy + 1) * self.getY() - game.getTrackTileMargin();
+        if (isUp()) {
+            if (dR > mR)
+                move.setWheelTurn(-correction);
+            else if (dL < mL)
+                move.setWheelTurn(correction);
+        } else if (isDown()) {
+            if (dR > mR)
+                move.setWheelTurn(correction);
+            else if (dL < mL)
+                move.setWheelTurn(-correction);
+        } else if (isRight()) {
+            if (dU < mU)
+                move.setWheelTurn(correction);
+            else if (dD > mD)
+                move.setWheelTurn(-correction);
+        } else if (isLeft()) {
+            if (dU < mU)
+                move.setWheelTurn(-correction);
+            else if (dD > mD)
+                move.setWheelTurn(correction);
+        }
+        System.out.println("dR=" + dR + ", mR=" + mR + ", dL=" + dL + ", mL=" + mL + ", dU=" + dU + ", mU=" + mU + ", dD=" + dD + ", mD=" + mD);
+    }
+
     class TurnLeft extends Turn {
 
         @Override
@@ -498,8 +568,8 @@ public final class MyStrategy implements Strategy {
             turnAngleBegin = getRightAngle();
             needAngle = turnAngleBegin + get() * ANGLE_90;
             System.out.println("New turn " + this.getClass() + " from angle: " + turnAngleBegin + " to angle: " + needAngle);
-            hasCarInBack = checkCloseAngle(ANGLE_180, ANGLE_15);
-            center = getTurnCenterCoord();
+            hasCarInBack = checkCloseAngle(ANGLE_180, ANGLE_45);
+            center = getTurnTileInsideCornerCoord();
             System.out
                     .println("New turn " + (tileSize * cx + tileSize / 2) + "," + (tileSize * cy + tileSize / 2) + " center: " + center[0] + ", " + center[1]);
             turnBegin(this);
@@ -515,6 +585,14 @@ public final class MyStrategy implements Strategy {
 
             double delta = abs(abs(self.getAngle()) - abs(turnAngleBegin));
 
+            System.out.println(tileSize);
+
+            if (turnCount > 1 && hasCarInBack
+                    && cx == currentTurn.tileX
+                    && cy == currentTurn.tileY
+                    && self.getDistanceTo(center[0], center[1]) < self.getWidth() * 2)
+                move.setSpillOil(true);
+
             if (delta >= ANGLE_45) {
                 turnHalf(this);
             }
@@ -523,12 +601,16 @@ public final class MyStrategy implements Strategy {
                 System.out.println("Angle is " + self.getAngle() + ", delta is " + delta + " stop turn");
                 turnEnd(this);
             } else {
-                System.out.println("D: " + self.getDistanceTo(center[0], center[1]) + ", R:" + tileSize);
-                if (self.getDistanceTo(center[0], center[1]) > tileSize * turnRadiusFactor) {
+                double angle = abs(self.getAngleTo(center[0], center[1]));
+                System.out.println("D: " + angle + ", Center:" + center[0] + ", " + center[1] + ", self: "
+                        + self.getX() + ", " + self.getY());
+
+                if (angle > ANGLE_15) {
                     move.setWheelTurn(get());
                     checkBrake();
                 } else {
-                    move.setWheelTurn(0.5 * get());
+                    if (speed < driftSpeed)
+                        move.setWheelTurn(0.1);
                     move.setBrake(false);
                     move.setEnginePower(1.0);
                 }
@@ -650,7 +732,6 @@ public final class MyStrategy implements Strategy {
     Direction resolveDirectionAfterNextTurn(TileType nextTile) {
 
         if (null != nextTile) {
-            System.out.println("Turn: " + lastTile + " -> " + nextTile);
             if (nextTile == LEFT_TOP_CORNER) {
                 if (isUp()) {
                     return RIGHT;
@@ -735,7 +816,7 @@ public final class MyStrategy implements Strategy {
         Bonus res = null;
         for (Bonus b : world.getBonuses()) {
             double dist = self.getDistanceTo(b);
-            if (abs(self.getAngleTo(b)) < ANGLE_45
+            if (abs(self.getAngleTo(b)) < ANGLE_60
                     && dist < getNextTurn().distance) {
                 if (dist < closestXY) {
                     res = b;
@@ -769,6 +850,7 @@ public final class MyStrategy implements Strategy {
 
     void turnHalf(Turn turn) {
         if (!turningHalf) {
+            System.out.print("turnHalf: dir=" + direction);
             turningHalf = true;
             nextTurn = null;
             if (isUp())
@@ -782,16 +864,19 @@ public final class MyStrategy implements Strategy {
 
             turnCount++;
 
-            if (turnCount > 1 && turn.hasCarInBack)
-                move.setSpillOil(true);
+            System.out.println(", next dir=" + direction);
+
+            if (isTurnTile(getNextTileOf(currentTurn.tileX, currentTurn.tileY, 1))) {
+                System.out.println("Next tile is turn! Stop turn.");
+                delegate = new MoveForward();
+            }
         }
     }
 
     void turnEnd(Turn turn) {
-        System.out.println("Turn end " + direction);
+        System.out.println("turnEnd: dir=" + direction);
         //flow(nextTurnFinder);
         delegate = null;
-        checkTurn();
         turning = false;
     }
 
@@ -801,11 +886,34 @@ public final class MyStrategy implements Strategy {
         return sqrt(speed * speed + 2 * dist * accel);
     }
 
-    double[] getTurnCenterCoord() {
-        System.out.println(TURN_CENTER_OFFSET_X[direction.ordinal()][getNextTurn().direction.ordinal()]);
-        double x = tileSize * cx + tileSize / 2 + TURN_CENTER_OFFSET_X[direction.ordinal()][getNextTurn().direction.ordinal()] * tileSize;
-        double y = tileSize * cy + tileSize / 2 + TURN_CENTER_OFFSET_Y[direction.ordinal()][getNextTurn().direction.ordinal()] * tileSize;
+    double[] getTurnTileInsideCornerCoord() {
+        double x = tileSize * getNextTurn().tileX + tileSize / 2 + TURN_CENTER_OFFSET_X[direction.ordinal()][getNextTurn().direction.ordinal()]
+                * (tileSize / 2 - margins);
+        double y = tileSize * getNextTurn().tileY + tileSize / 2 + TURN_CENTER_OFFSET_Y[direction.ordinal()][getNextTurn().direction.ordinal()]
+                * (tileSize / 2 - margins);
         return new double[] {x, y};
+    }
+
+    public static void main(String[] args) {
+
+        int cx = 0;
+        int cy = 2;
+
+        Direction d1 = LEFT;
+        Direction d2 = UP;
+
+        tileSize = 800;
+
+        double x = tileSize * cx + tileSize / 2 + TURN_CENTER_OFFSET_X[d1.ordinal()][d2.ordinal()]
+                * (tileSize / 2 - 80);
+        double y = tileSize * cy + tileSize / 2 + TURN_CENTER_OFFSET_Y[d1.ordinal()][d2.ordinal()]
+                * (tileSize / 2 - 80);
+
+        System.out.println(TURN_CENTER_OFFSET_X[d1.ordinal()][d2.ordinal()]);
+        System.out.println(TURN_CENTER_OFFSET_Y[d1.ordinal()][d2.ordinal()]);
+
+        System.out.println(x);
+        System.out.println(y);
     }
 
 }
