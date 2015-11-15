@@ -33,10 +33,6 @@ public final class MyStrategy implements Strategy {
     private static final double ANGLE_180 = PI;
     private static final double ANGLE_120 = 2 * PI / 3;
     private static final double ANGLE_90 = PI / 2;
-    private static final double ANGLE_20 = ANGLE_90 / 9 * 2;
-    private static final double ANGLE_80 = ANGLE_90 / 9 * 8;
-    private static final double ANGLE_60 = PI / 3;
-    private static final double ANGLE_45 = PI / 4;
     private static final double ANGLE_30 = PI / 6;
     private static final double ANGLE_15 = PI / 12;
     private static final double ANGLE_5 = PI / 36;
@@ -211,7 +207,7 @@ public final class MyStrategy implements Strategy {
 
     //    
 
-    static double A = 1;
+    static double A = 0.5;
     static double B = 4;
     static double C = 400;
     static double D = 1;
