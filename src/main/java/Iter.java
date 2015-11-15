@@ -24,46 +24,54 @@ public class Iter {
         }
 
         File dir = new File(args[0]);
-        double a = Double.parseDouble(args[1]);// -0.5;
-        double a1 = Double.parseDouble(args[2]);//  2;
-        double da = 0.1;
+        float a0 = Float.parseFloat(args[1]);// -0.5;
+        float a1 = Float.parseFloat(args[2]);//  2;
+        float da = 0.1f;
 
-        double b = Double.parseDouble(args[3]);//  -5;
-        double b1 = Double.parseDouble(args[4]);//  5;
-        double db = 1;
+        float b0 = Float.parseFloat(args[3]);//  -5;
+        float b1 = Float.parseFloat(args[4]);//  5;
+        float db = 1;
 
-        double c = Double.parseDouble(args[5]);//  -2000;
-        double c1 = Double.parseDouble(args[6]);//  2000;
-        double dc = 100;
+        float c0 = Float.parseFloat(args[5]);//  -2000;
+        float c1 = Float.parseFloat(args[6]);//  2000;
+        float dc = 100f;
 
-        double d = Double.parseDouble(args[7]);//  0.5;
-        double d1 = Double.parseDouble(args[8]);//  1;
-        double dd = 0.1;
+        float d0 = Float.parseFloat(args[7]);//  0.5;
+        float d1 = Float.parseFloat(args[8]);//  1;
+        float dd = 0.1f;
 
-        double e = Double.parseDouble(args[9]);//  0.5;
-        double e1 = Double.parseDouble(args[10]);//  1;
-        double de = 0.1;
+        float e0 = Float.parseFloat(args[9]);//  0.5;
+        float e1 = Float.parseFloat(args[10]);//  1;
+        float de = 0.1f;
 
-        double f = Double.parseDouble(args[11]);// 12;
-        double f1 = Double.parseDouble(args[12]);// 30;
-        double df = 1;
+        float f0 = Float.parseFloat(args[11]);// 12;
+        float f1 = Float.parseFloat(args[12]);// 30;
+        float df = 1;
 
         if (null != l) {
             String[] ss = l.split("\t");
-            a = Double.parseDouble(ss[0]);
-            b = Double.parseDouble(ss[1]);
-            c = Double.parseDouble(ss[2]);
-            d = Double.parseDouble(ss[3]);
-            e = Double.parseDouble(ss[4]);
-            f = Double.parseDouble(ss[5]);
+            a0 = Float.parseFloat(ss[0]);
+            b0 = Float.parseFloat(ss[1]);
+            c0 = Float.parseFloat(ss[2]);
+            d0 = Float.parseFloat(ss[3]);
+            e0 = Float.parseFloat(ss[4]);
+            f0 = Float.parseFloat(ss[5]);
         }
 
-        for (; d <= d1; d += dd) {
-            for (; e <= e1; e += de) {
-                for (; f <= f1; f += df) {
-                    for (; a <= a1; a += da) {
-                        for (; b <= b1; b += db) {
-                            for (; c <= c1; c += dc) {
+        System.out.println(a1 +
+                " " + b1 +
+                " " + c1 +
+                " " + d1 +
+                " " + e1 +
+                " " + f1);
+        for (float d = d0; d <= d1; d += dd) {
+            for (float e = e0; e <= e1; e += de) {
+                for (float f = f0; f <= f1; f += df) {
+                    for (float a = a0; a <= a1; a += da) {
+                        for (float b = b0; b <= b1; b += db) {
+                            for (float c = c0; c <= c1; c += dc) {
+                                long t = System.currentTimeMillis();
+                                System.out.println("c=" + c);
                                 String s = "local-runner-console.bat" +
                                         " " + a +
                                         " " + b +
@@ -75,6 +83,7 @@ public class Iter {
                                 try {
                                     Process p = Runtime.getRuntime().exec(s, null, dir);
                                     p.waitFor();
+                                    System.out.println("Time: " + (System.currentTimeMillis() - t) + " ms");
                                 } catch (Exception ex) {
                                     ex.printStackTrace();
                                 }
