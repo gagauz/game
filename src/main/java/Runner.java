@@ -12,14 +12,11 @@ public final class Runner {
     private static MyStrategy strategy;
 
     public static void main(String[] args) throws IOException {
-        if (args.length == 6) {
+        if (args.length == 3) {
             double a = Double.parseDouble(args[0]);
             double b = Double.parseDouble(args[1]);
             double c = Double.parseDouble(args[2]);
-            double d = Double.parseDouble(args[3]);
-            double e = Double.parseDouble(args[4]);
-            double f = Double.parseDouble(args[5]);
-            strategy = new MyStrategy(a, b, c, d, e, f);
+            strategy = new MyStrategy(a, b, c);
         } else {
             strategy = new MyStrategy();
         }
@@ -71,8 +68,10 @@ public final class Runner {
 
                 remoteProcessClient.writeMoves(moves);
             }
-            System.out.println(strategy.A + "\t" + strategy.B + "\t" + strategy.C + "\t" + strategy.D + "\t" + strategy.E + "\t" + strategy.turn_max_speed
-                    + "\t" + (strategy.speedAvg / strategy.tickCount) + "\t" + strategy.tickCount);
+            System.out.println(strategy.inside_turn_factor + "\t" + strategy.outside_turn_factor + "\t" + strategy.mobility_factor + "\t"
+                    + strategy.mobility_2x_factor + "\t" + strategy.stability_factor + "\t" + strategy.turn_max_speed
+                    + "\t" + strategy.turn_enter_offset_tiles
+                    + "\t" + (strategy.turn_max_speed / strategy.tickCount));
         } finally {
             remoteProcessClient.close();
         }

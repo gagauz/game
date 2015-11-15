@@ -10,7 +10,6 @@ import static model.Direction.LEFT;
 import static model.Direction.RIGHT;
 import static model.Direction.UP;
 import static model.TileType.BOTTOM_HEADED_T;
-import static model.TileType.EMPTY;
 import static model.TileType.LEFT_BOTTOM_CORNER;
 import static model.TileType.LEFT_HEADED_T;
 import static model.TileType.LEFT_TOP_CORNER;
@@ -25,7 +24,6 @@ import model.Direction;
 import model.Game;
 import model.Move;
 import model.TileType;
-import model.Unit;
 import model.World;
 
 public final class MyStrategy implements Strategy {
@@ -120,15 +118,10 @@ public final class MyStrategy implements Strategy {
     private Game game;
     private Move move;
 
-    boolean enableCenter = false;
-    boolean turning = false;
-    boolean turningHalf = false;
-
     private double lastX;
     private double lastY;
     private double lastSpeedX;
     private double lastSpeedY;
-    private double turnAngleBegin;
     private double mobility = mobility_factor;
     private double maxSpeed = max_speed;
     private double turnMaxSpeed = turn_max_speed;
@@ -137,21 +130,14 @@ public final class MyStrategy implements Strategy {
     private boolean isForward;
     private boolean isBackward;
     private boolean backwardOn;
+    private boolean beforeTurnTile;
     private int tickWait = 0;
-
-    class TileXY {
-        final int x;
-        final int y;
-
-        TileXY(int x, int y) {
-            this.x = x;
-            this.y = y;
-        }
-    }
 
     class NextTurn {
         final double x;
         final double y;
+        final double cornerX;
+        final double cornerY;
         final int tileX;
         final int tileY;
         final TileType tile;
@@ -159,6 +145,7 @@ public final class MyStrategy implements Strategy {
         double dist;
         double turnDirection = 0;
         int deltaTile = 1;
+        boolean entered = false;
 
         NextTurn(int tileX, int tileY, Direction currentDirection) {
             this.tileX = tileX;
@@ -168,7 +155,11 @@ public final class MyStrategy implements Strategy {
             this.y = getTileCenter(tileY);
             this.afterDirection = resolveDirectionAfterTurn(this.tile, currentDirection);
             this.dist = null != self ? self.getDistanceTo(x, y) : 0;
+            this.entered = this.x == cx && this.y == cy;
             this.turnDirection = TURN_DIRECTION[currentDirection.ordinal()][afterDirection.ordinal()];
+            double[] c = getTurnTileInsideCornerCoord(this);
+            this.cornerX = c[0];
+            this.cornerY = c[1];
         }
 
         double distanceTo() {
@@ -177,13 +168,14 @@ public final class MyStrategy implements Strategy {
     }
 
     private NextTurn currentTurn;
-    private NextTurn nextTurn;
-    private NextTurn doubleTurn;
     private double moveBackBeginX;
     private double moveBackBeginY;
     private double speed;
     private double accel;
     private boolean brakeOn;
+
+    private PIDController pidOffset = new PIDController(1, 1, 1);
+    private PIDController pidAngle = new PIDController(1, 1, 1);
 
     private int cx;
     private int cy;
@@ -195,15 +187,12 @@ public final class MyStrategy implements Strategy {
     private Direction direction;
     private Bonus bonus;
 
-    private int turnCount = 0;
     private int tickTr = 0;
     private int staleMoveDelay;
     int tickCount;
     double speedAvg;
 
     private Delegate delegate;
-    private NextTurn lastTurn;
-    private TileType nextTile = EMPTY;
 
     //    
 
@@ -214,33 +203,28 @@ public final class MyStrategy implements Strategy {
     static double E = 1;
 
     public MyStrategy() {
+        this(0, 0, 0);
     }
 
-    public MyStrategy(double a, double b, double c, double d, double e, double f) {
+    public MyStrategy(double a, double b, double c) {
         A = a;
         B = b;
         C = c;
-        D = d;
-        E = e;
-        turn_max_speed = f;
-    }
+        pidAngle.setPID(10, 1, 1);
+        pidAngle.setContinuous();
+        pidAngle.setInputRange(-ANGLE_90, ANGLE_90);
+        pidAngle.setOutputRange(-1.0, 1.0);
+        pidAngle.setTolerance(5);
+        pidAngle.setSetpoint(0);
+        pidAngle.enable();
 
-    double getTurnEnterOffset(NextTurn turn) {
-        return speed * speed * A + speed * B + C;
-    }
-
-    double getTurnEnterSpeed() {
-        if (null != getNextTurn()) {
-            if (null != doubleTurn && nextTurn.distanceTo() < 1.5 * tile_size) {
-                turnMaxSpeed = turn_max_speed;
-                if ((doubleTurn.afterDirection != direction && 1 == doubleTurn.deltaTile)
-                        || (doubleTurn.afterDirection == direction && 2 == doubleTurn.deltaTile)) {
-                    turnMaxSpeed = D * turnMaxSpeed;
-                }
-                return E * turnMaxSpeed;
-            }
-        }
-        return turnMaxSpeed;
+        pidOffset.setPID(10, 1, 1);
+        pidOffset.setContinuous();
+        pidOffset.setInputRange(-ANGLE_90, ANGLE_90);
+        pidOffset.setOutputRange(-1.0, 1.0);
+        pidOffset.setTolerance(5);
+        pidOffset.setSetpoint(0);
+        pidOffset.enable();
     }
 
     @Override
@@ -270,10 +254,9 @@ public final class MyStrategy implements Strategy {
 
         if (null == direction) {
             direction = world.getStartingDirection();
-            currentTurn = new NextTurn(cx, cy, direction);
-            lastTurn = currentTurn;
-            lastCenterX = currentTurn.x;
-            lastCenterY = currentTurn.y;
+            lastCenterX = getTileCenter(cx);
+            lastCenterY = getTileCenter(cy);
+            pidAngle.setSetpoint(getRightAngle());
         }
         centerX = lastCenterX;
         centerY = lastCenterY;
@@ -290,9 +273,6 @@ public final class MyStrategy implements Strategy {
 
         if (null != currentTurn) {
             currentTurn.dist = self.getDistanceTo(currentTurn.x, currentTurn.y);
-        }
-        if (null != nextTurn) {
-            nextTurn.dist = self.getDistanceTo(nextTurn.x, nextTurn.y);
         }
 
         if (world.getTick() > game.getInitialFreezeDurationTicks()) {
@@ -365,82 +345,42 @@ public final class MyStrategy implements Strategy {
     }
 
     void checkTurn() {
+        if (null == currentTurn) {
+            NextTurn turn = findNextTurnFrom(cx, cy, direction, speed > drift_speed ? 2 : 1);
+            if (null != turn) {
+                currentTurn = turn;
 
-        if (turning)
-            return;
-
-        int tileAhead = speed > drift_speed ? 2 : 1;
-
-        int[] nextTileXY;
-
-        if (turning)
-            nextTileXY = getNextTileXY(currentTurn.tileX, currentTurn.tileY, 1, direction);
-        else
-            nextTileXY = getNextTileXY(cx, cy, tileAhead, direction);
-
-        nextTile = world.getTilesXY()[nextTileXY[0]][nextTileXY[1]];
-
-        if (EMPTY == nextTile) {
-            nextTileXY = new int[] {cx, cy};
-            nextTile = world.getTilesXY()[nextTileXY[0]][nextTileXY[1]];
-
-        }
-
-        Delegate old = delegate;
-
-        if (null == lastTurn || nextTileXY[0] != lastTurn.tileX || nextTileXY[1] != lastTurn.tileY) {
-
-            if (isTurnTile(nextTile, direction)) {
-                if (null == nextTurn || nextTurn.tileX != nextTileXY[0] || nextTurn.tileY != nextTileXY[1]) {
-                    nextTurn = new NextTurn(nextTileXY[0], nextTileXY[1], direction);
-                    doubleTurn = findNextTurnFrom(nextTurn, 1);
-                } else {
-                    nextTurn.dist = self.getDistanceTo(nextTurn.x, nextTurn.y);
-                }
-
-                double dist = getNextTurn().distanceTo();
-                double start = getTurnEnterOffset(getNextTurn());
-                //System.out.println("start=" + start + ", dist=" + dist);
-                if (dist < start) {
-                    Direction dir = nextTurn.afterDirection;
-                    if (null != dir && dir != direction) {
-                        //System.out.println("Turn detected: " + direction + " -> " + dir + ", " + lastTurn.tile + " --- " + nextTile
-                        //                                + ", start=" + start + ", dist=" + dist + ", speed=" + speed + ", tileAhead=" + tileAhead + ", turning=" + turning);
-
-                        if (nextTurn.turnDirection != 0) {
-                            delegate = new Turn(nextTurn);
-                        }
-                    }
-                }
-                if (delegate != old) {
-                    lastTurn = nextTurn;
-                }
+            }
+        } else {
+            double deltaAngle = 0.0;
+            if (!currentTurn.entered && cx == currentTurn.tileX && cy == currentTurn.tileY) {
+                currentTurn.entered = true;
+                direction = currentTurn.afterDirection;
+            } else {
+                deltaAngle = getOffsetCenterAxisAngle();
             }
 
+            if (currentTurn.entered && (cx != currentTurn.tileX || cy != currentTurn.tileY || abs(deltaAngle) < ANGLE_15)) {
+                currentTurn = null;
+            }
         }
-        if (null == delegate)
-            delegate = new MoveForward();
     }
 
     void checkStraight() {
-        //        if (!turning) {
-        double delta1 = stability_factor * speed / turnMaxSpeed * getOffsetAngle() / ANGLE_90;
+        debugOffsets();
+        pidOffset.setInput(getOffsetCenter());
+        pidOffset.performPID();
 
-        double offset = getOffsetCenter() / fromCenterToBorderWithWidth;
-        //            //System.out.println("Dir " + direction + " need=" + need + ", real=" + real + " OF " + DIR[direction.ordinal()]);
+        pidOffset.setInput(getOffsetAngle());
+        pidOffset.performPID();
 
-        double delta2 = mobility * OFFSET[direction.ordinal()] * offset;
+        double e1 = pidAngle.getError();
+        double e2 = pidOffset.getError();
+        System.out.println("offset error=" + e1 + ", angle error=" + e2);
 
-        //        //System.out.println("CXY=" + lastCenterX + "," + lastCenterX + ", CenterXY=" + centerX + ", " + centerY + " Offs. center=" + getOffsetCenter()
-        //                + " wheel correction 1="
-        //                + delta2
-        //                + " Offs. angle=" + getOffsetAngle() + " wheel correction 2=" + delta2);
-        //            //System.out.println("Dir o1=" + delta1 + ", o2=" + delta2);
+        double error = e1 + e2;
 
-        delta1 += delta2;
-        //            move.setEnginePower(0.2 + abs(ANGLE_90 - abs(offset)) / ANGLE_90);
-        move.setWheelTurn(delta1);
-        //        }
+        move.setWheelTurn(error);
     }
 
     void avoidCollisions(double x, double y) {
@@ -469,7 +409,7 @@ public final class MyStrategy implements Strategy {
 
         Car carToAvoid = null;
         double d2 = 1;
-        if (enable_car_avoidance && !turning) {
+        if (enable_car_avoidance) {
             for (Car car : world.getCars()) {
                 if (self.getId() != car.getId()) {
                     d2 = self.getDistanceTo(car);
@@ -500,7 +440,7 @@ public final class MyStrategy implements Strategy {
     }
 
     void defineCenter() {
-        if (!backwardOn) {
+        if (!backwardOn && !beforeTurnTile) {
 
             //Прижаться к краю
             //centerX += TURN_OFFSET_OUT[direction.ordinal()][nextTurnDirection.ordinal()] * self.getWidth();
@@ -508,20 +448,20 @@ public final class MyStrategy implements Strategy {
 
             boolean increaseMobility = false;
 
-            if (enable_turn_enter_offset && null != getNextTurn()) {
-                if (nextTurn.distanceTo() < tile_size * 4) {
-                    double m = outside_turn_factor;
-
-                    if (null != doubleTurn) {
-                        if (doubleTurn.afterDirection == direction) {
-                            m = 0;
-                        }
-                        increaseMobility = true;
-                    }
-
-                    centerX = lastCenterX + m * fromCenterToBorderWithWidth * TURN_OFFSET_OUT[direction.ordinal()][getNextTurn().afterDirection.ordinal()];
-                    centerY = lastCenterY + m * fromCenterToBorderWithWidth * TURN_OFFSET_OUT[direction.ordinal()][getNextTurn().afterDirection.ordinal()];
-                }
+            if (enable_turn_enter_offset) {
+                //                if (nextTurn.distanceTo() < tile_size * 4) {
+                //                    double m = outside_turn_factor;
+                //
+                //                    if (null != doubleTurn) {
+                //                        if (doubleTurn.afterDirection == direction) {
+                //                            m = 0;
+                //                        }
+                //                        increaseMobility = true;
+                //                    }
+                //
+                //                    centerX = lastCenterX + m * fromCenterToBorderWithWidth * TURN_OFFSET_OUT[direction.ordinal()][getNextTurn().afterDirection.ordinal()];
+                //                    centerY = lastCenterY + m * fromCenterToBorderWithWidth * TURN_OFFSET_OUT[direction.ordinal()][getNextTurn().afterDirection.ordinal()];
+                //                }
             }
 
             pickBonus();
@@ -542,7 +482,7 @@ public final class MyStrategy implements Strategy {
     }
 
     void pickBonus() {
-        if (enable_bonus_lookup && !turning) {
+        if (enable_bonus_lookup && null == currentTurn) {
             if (null == bonus) {
                 double closestXY = Double.MAX_VALUE;
                 for (Bonus b : world.getBonuses()) {
@@ -584,10 +524,14 @@ public final class MyStrategy implements Strategy {
 
     double getOffsetCenter() {
 
-        double offset = isHorizontal()
-                ? self.getY() - centerY
-                : self.getX() - centerX;
-        return offset;
+        if (null == currentTurn) {
+            double offset = isHorizontal()
+                    ? self.getY() - centerY
+                    : self.getX() - centerX;
+            return offset;
+        }
+        return 0;
+
     }
 
     double getOffsetRealCenter() {
@@ -606,17 +550,13 @@ public final class MyStrategy implements Strategy {
 
     class MoveForward implements Delegate {
         MoveForward() {
-            turning = false;
             print();
             tickTr = 0;
-            turnAngleBegin = self.getAngle();
-            //System.out.println("Begin move forward");
         }
 
         @Override
         public void move() {
             move.setEnginePower(1.0);
-            checkBrake();
             checkTurn();
             checkStraight();
             avoidCollisions(-1, -1);
@@ -631,7 +571,7 @@ public final class MyStrategy implements Strategy {
         return sqrt(pow(moveBackBeginX - self.getX(), 2) + pow(moveBackBeginY - self.getY(), 2));
     }
 
-    double getOffsetAngle() {
+    double getOffsetCenterAxisAngle() {
         double need = getRightAngle();
         double real = self.getAngle();
         if (need == ANGLE_180) {
@@ -649,6 +589,18 @@ public final class MyStrategy implements Strategy {
         return offsAngle;
     }
 
+    double getOffsetAngle() {
+        if (null == currentTurn) {
+            return getOffsetCenterAxisAngle();
+        }
+        if (currentTurn.entered && currentTurn.distanceTo() < tile_size) {
+            return ANGLE_90 - self.getAngleTo(currentTurn.cornerX, currentTurn.cornerY);
+        }
+        double realAngle = self.getAngleTo(currentTurn.cornerX, currentTurn.cornerY);
+        double needAngle = atan(fromCenterToBorderWithWidth / currentTurn.distanceTo());
+        return needAngle - realAngle;
+    }
+
     class MoveBackward implements Delegate {
 
         final Delegate lastDelegate;
@@ -659,13 +611,8 @@ public final class MyStrategy implements Strategy {
         MoveBackward(Delegate lastDelegate) {
             this.lastDelegate = lastDelegate;
             tickTr = 0;
-            turning = false;
             moveBackBeginX = self.getX();
             moveBackBeginY = self.getY();
-            //System.out.println("Begin move backward dir: " + direction + " angle:" + self.getAngle()
-            //                    + " centerX=" + centerX + " centerY=" + centerY
-            //                    + " cx=" + cx + " cy=" + cy
-            //                    + " self.x=" + self.getX() + " self.y=" + self.getY());
             countDownMove1 = 2 * staleMoveDelay;
             countDownMove2 = 2 * staleMoveDelay;
             offsAngle = getOffsetAngle() > 0 ? 1 : -1;
@@ -713,35 +660,23 @@ public final class MyStrategy implements Strategy {
     }
 
     boolean isCanUseNitro() {
-        if (null != getNextTurn()) {
-            return (nextTurn.distanceTo() > tile_size * 4 && abs(getOffsetAngle()) < ANGLE_5);
+        NextTurn t = findNextTurnFrom(cx, cy, direction, 5);
+        if (null != t) {
+            return (t.distanceTo() > tile_size * 4 && abs(getOffsetAngle()) < ANGLE_5);
         }
         return false;
     }
 
     void checkNitro() {
-        if (!enable_nitro || turning || brakeOn || self.getRemainingNitroTicks() > 0 || self.getNitroChargeCount() < 1
+        if (!enable_nitro || null != currentTurn || brakeOn || self.getRemainingNitroTicks() > 0 || self.getNitroChargeCount() < 1
                 || (null != ally && ally.getNitroChargeCount() == 0)) {
             return;
         }
 
-        if (null != getNextTurn()) {
-            if (isCanUseNitro()) {
-                //System.out.println(nextTurn.distanceTo());
-                //System.out.println("Use nitro !!! " + nextTurn.distanceTo());
-                move.setUseNitro(true);
-            }
-        }
-    }
-
-    void checkBrake() {
-        brakeOn = false;
-
-        brakeOn = speed > getTurnEnterSpeed();
-        if (brakeOn) {
-            //            //System.out.println("Bake ON! " + speed);
-            move.setEnginePower(0.3);
-            move.setBrake(true);
+        if (isCanUseNitro()) {
+            //System.out.println(nextTurn.distanceTo());
+            //System.out.println("Use nitro !!! " + nextTurn.distanceTo());
+            move.setUseNitro(true);
         }
     }
 
@@ -780,154 +715,6 @@ public final class MyStrategy implements Strategy {
                     || (isBackward && d < 2 * tile_size)) {
                 move.setEnginePower(0.0);
             }
-        }
-    }
-
-    void checkMargins() {
-        if (turning)
-            return;
-        double correction = 0.2;
-        double dR = self.getX() + self.getWidth() / 2;
-        double dL = self.getX() - self.getWidth() / 2;
-        double dU = self.getY() - self.getWidth() / 2;
-        double dD = self.getY() + self.getWidth() / 2;
-        double mR = (cx + 1) * tile_size - game.getTrackTileMargin();
-        double mL = cx * tile_size + game.getTrackTileMargin();
-        double mU = cy * self.getY() + game.getTrackTileMargin();
-        double mD = (cy + 1) * self.getY() - game.getTrackTileMargin();
-        if (isUp()) {
-            if (dR > mR)
-                move.setWheelTurn(-correction);
-            else if (dL < mL)
-                move.setWheelTurn(correction);
-        } else if (isDown()) {
-            if (dR > mR)
-                move.setWheelTurn(correction);
-            else if (dL < mL)
-                move.setWheelTurn(-correction);
-        } else if (isRight()) {
-            if (dU < mU)
-                move.setWheelTurn(correction);
-            else if (dD > mD)
-                move.setWheelTurn(-correction);
-        } else if (isLeft()) {
-            if (dU < mU)
-                move.setWheelTurn(-correction);
-            else if (dD > mD)
-                move.setWheelTurn(correction);
-        }
-        //System.out.println("dR=" + dR + ", mR=" + mR + ", dL=" + dL + ", mL=" + mL + ", dU=" + dU + ", mU=" + mU + ", dD=" + dD + ", mD=" + mD);
-    }
-
-    class Turn implements Delegate {
-
-        boolean hasCarInBack;
-        boolean enteredTurnTile;
-        double[] center;
-        double endAngle = turn_end_delta_angle;
-        double turnSpeedStart;
-        double turnDir;
-
-        Turn(NextTurn nextTurn) {
-            turnDir = nextTurn.turnDirection;
-            tickTr = 0;
-            turnAngleBegin = self.getAngle();// getRightAngle();
-
-            debugOffsets();
-            hasCarInBack = self.getOilCanisterCount() > 0 && checkCloseAngle(ANGLE_180, 3 * tile_size, oilMaxDistance);
-            currentTurn = nextTurn;
-            currentTurn.turnDirection = get();
-            center = getTurnTileInsideCornerCoord(currentTurn);
-            turning = true;
-            turningHalf = false;
-            enteredTurnTile = cx == currentTurn.tileX && cy == currentTurn.tileY;
-            //System.out.println("Start new turn " + (tile_size * cx + tile_size / 2) + "," + (tile_size * cy + tile_size / 2) + " center: " + center[0] + ", "
-            //                            + center[1]);
-
-            if (null != doubleTurn) {
-                //                if (doubleTurn.deltaTile == 1)
-                endAngle = doubleTurn.afterDirection == direction ? ANGLE_30 : ANGLE_120;
-                //                else
-                //                    endAngle = doubleTurn.direction == direction ? ANGLE_90 * 0.7 : ANGLE_120 * 0.7;
-            }
-            turnSpeedStart = turnMaxSpeed;
-            //System.out.println("New turn " + this.getClass() + " from angle: " + turnAngleBegin + " to angle: " + endAngle
-            //                    + ", maxSpeed=" + maxSpeed
-            //                    + ", max_speed=" + max_speed
-            //                    + ", turnMaxSpeed=" + turnMaxSpeed
-            //                    + ", turn_Max_Speed=" + turn_max_speed
-            //                    + ", doubleTurn=" + doubleTurn
-            //                    );
-        }
-
-        double get() {
-            return turnDir;
-        }
-
-        @Override
-        public void move() {
-            move.setEnginePower(1.0);
-
-            double delta = abs(abs(self.getAngle()) - abs(turnAngleBegin));
-
-            //            if (null == doubleTurn)
-            //                turnMaxSpeed = turnSpeedStart + 0.3 * turnSpeedStart * delta / ANGLE_90;
-
-            checkBrake();
-
-            boolean inside = cx == currentTurn.tileX && cy == currentTurn.tileY;
-
-            // Установить новое направление
-            if (!enteredTurnTile && inside) {
-                enteredTurnTile = true;
-
-            }
-
-            if (enteredTurnTile) {
-                direction = currentTurn.afterDirection;
-            }
-
-            double turnDelay = 0;
-
-            //            if (enteredTurnTile && null == doubleTurn) {
-            //                turnDelay = 0;//ANGLE_60 * 2 * OFFSET[direction.ordinal()] * getOffsetCenter() / tile_size;
-            //            }
-
-            if (isBackward
-                    && turnCount > 1
-                    && hasCarInBack
-                    && enteredTurnTile) {
-                move.setSpillOil(true);
-                hasCarInBack = false;
-            }
-
-            if (delta >= endAngle / 2) {
-                turnHalf(this);
-            }
-
-            if ((enteredTurnTile && delta >= endAngle + turnDelay) ||
-                    (enteredTurnTile && !inside)) {
-                //System.out.println("Turn finish: Angle is " + self.getAngle() + ", delta is " + delta);
-                turnEnd(this);
-            } else {
-                //                double w = (turn_max_angular_speed - abs(self.getAngularSpeed())) / turn_max_angular_speed;
-                //                (speed > drift_speed || inside ? 1 : 0.5)
-                move.setWheelTurn(get());
-                checkBrake();
-            }
-            if (speed < drift_speed)
-                avoidCollisions(center[0], center[1]);
-            //            checkStraight();
-            checkCanThrowProjectile();
-            checkStale();
-        }
-
-        boolean isLeft() {
-            return get() < 0;
-        }
-
-        boolean isRight() {
-            return get() > 0;
         }
     }
 
@@ -1067,29 +854,24 @@ public final class MyStrategy implements Strategy {
         return direction;
     }
 
-    NextTurn getNextTurn() {
-        if (null == nextTurn) {
-            nextTurn = findNextTurnFrom(cx, cy, direction, Integer.MAX_VALUE);
-
-        }
-        if (null == doubleTurn && null != nextTurn) {
-            doubleTurn = findNextTurnFrom(nextTurn, 1);
-        }
-        return nextTurn;
-    }
+    static int[][] NEXT_TURN_DELTAS = {
+            //X, Y
+            {-1, 0},//L  
+            {1, 0},//R
+            {0, -1},//U
+            {0, 1},//D
+    };
 
     NextTurn findNextTurnFrom(int fromX, int fromY, Direction dir, int limit) {
-        int d = DOWN == dir || RIGHT == dir ? 1 : -1;
 
-        int dX = UP == dir || DOWN == dir ? 0 : d;
-        int dY = UP == dir || DOWN == dir ? d : 0;
+        int dX = NEXT_TURN_DELTAS[dir.ordinal()][0];
+        int dY = NEXT_TURN_DELTAS[dir.ordinal()][1];
         int maxX = world.getWidth();
         int maxY = world.getHeight();
         for (int x = fromX, y = fromY, c = 0; x < maxX && y < maxY && x > -1 && y > -1 && c < limit; x = x + dX, y = y + dY, c++) {
             TileType tile = world.getTilesXY()[x][y];
             if (c > 0 && isTurnTile(tile, dir)) {
                 return new NextTurn(x, y, dir);
-
             }
         }
         return null;
@@ -1115,12 +897,6 @@ public final class MyStrategy implements Strategy {
         return world.getTilesXY()[getTileXY(x)][getTileXY(y)];
     }
 
-    double distFromCenter(Unit unit) {
-        double unitXY = isHorizontal() ? unit.getY() : unit.getX();
-        double centerXY = isHorizontal() ? centerY : centerX;
-        return unitXY - centerXY;
-    }
-
     boolean isTurnTile(TileType type, Direction dir) {
         boolean turn = (LEFT_TOP_CORNER == type)
                 || (LEFT_BOTTOM_CORNER == type)
@@ -1133,26 +909,6 @@ public final class MyStrategy implements Strategy {
                     || (BOTTOM_HEADED_T == type && UP == dir);
         }
         return turn;
-    }
-
-    void turnHalf(Turn turn) {
-        if (!turningHalf) {
-            //System.out.print("turnHalf: dir=" + direction);
-            turningHalf = true;
-            turnCount++;
-        }
-    }
-
-    void turnEnd(Turn turn) {
-        //System.out.println("turnEnd: dir=" + direction);
-        nextTurn = null;
-        lastCenterX = currentTurn.x;
-        lastCenterY = currentTurn.y;
-        currentTurn = null;
-        doubleTurn = null;
-        delegate = null;
-        turning = false;
-
     }
 
     double getEndSpeed(double dist) {
@@ -1186,20 +942,257 @@ public final class MyStrategy implements Strategy {
     }
 
     void debugOffsets() {
-        //System.out.println(
-        //                "Direction=" + direction
-        //                        + ", centerX=" + centerX
-        //                        + ", centerY=" + centerY
-        //                        + ", lastCenterX=" + lastCenterX
-        //                        + ", lastCenterY=" + lastCenterY
-        //                        + ", offs. center=" + getOffsetCenter()
-        //                        + ", offs. angle=" + getOffsetAngle()
-        //                );
+        System.out.println(
+                "Direction=" + direction
+                        + ", centerX=" + centerX
+                        + ", centerY=" + centerY
+                        + ", lastCenterX=" + lastCenterX
+                        + ", lastCenterY=" + lastCenterY
+                        + ", offs. center=" + getOffsetCenter()
+                        + ", offs. angle=" + getOffsetAngle()
+                );
         if (null != currentTurn) {
-            //System.out.println(
-            //                    "currentTurn=[" + currentTurn.tile
-            //                            + ", " + currentTurn.afterDirection + "]"
-            //                    );
+            System.out.println(
+                    "currentTurn=[" + currentTurn.tile
+                            + ", " + currentTurn.afterDirection
+                            + ", dist=" + currentTurn.dist
+                            + ", cornerX=" + currentTurn.cornerX
+                            + ", cornerY=" + currentTurn.cornerY
+                            + ", turnDir=" + currentTurn.turnDirection
+                            + "]"
+                    );
         }
+    }
+
+    class PIDController {
+
+        private double m_P; // factor for "proportional" control
+        private double m_I; // factor for "integral" control
+        private double m_D; // factor for "derivative" control
+        private double m_input; // sensor input for pid controller
+        private double m_maximumOutput = 1.0; // |maximum output|
+        private double m_minimumOutput = -1.0; // |minimum output|
+        private double m_maximumInput = 0.0; // maximum input - limit setpoint to this
+        private double m_minimumInput = 0.0; // minimum input - limit setpoint to this
+        private boolean m_continuous = false; // do the endpoints wrap around? eg. Absolute encoder
+        private boolean m_enabled = false; //is the pid controller enabled
+        private double m_prevError = 0.0; // the prior sensor input (used to compute velocity)
+        private double m_totalError = 0.0; //the sum of the errors for use in the integral calc
+        private double m_tolerance = 0.05; //the percetage error that is considered on target
+        private double m_setpoint = 0.0;
+        private double m_error = 0.0;
+        private double m_result = 0.0;
+
+        /**
+         * Allocate a PID object with the given constants for P, I, D
+         * @param Kp the proportional coefficient
+         * @param Ki the integral coefficient
+         * @param Kd the derivative coefficient
+         */
+        public PIDController(double Kp, double Ki, double Kd) {
+            setPID(Kp, Ki, Kd);
+
+        }
+
+        /**
+         * Read the input, calculate the output accordingly, and write to the output.
+         * This should only be called by the PIDTask
+         * and is created during initialization.
+         */
+        private void calculate() {
+
+            // If enabled then proceed into controller calculations
+            if (m_enabled) {
+
+                // Calculate the error signal
+                m_error = m_setpoint - m_input;
+
+                // !!!!DEBUG!!!
+                System.out.println(m_setpoint);
+
+                // If continuous is set to true allow wrap around
+                if (m_continuous) {
+                    if (Math.abs(m_error) > (m_maximumInput - m_minimumInput) / 2) {
+                        if (m_error > 0) {
+                            m_error = m_error - m_maximumInput + m_minimumInput;
+                        } else {
+                            m_error = m_error +
+                                    m_maximumInput - m_minimumInput;
+                        }
+                    }
+                }
+
+                /* Integrate the errors as long as the upcoming integrator does
+                   not exceed the minimum and maximum output thresholds */
+                if (((m_totalError + m_error) * m_I < m_maximumOutput) &&
+                        ((m_totalError + m_error) * m_I > m_minimumOutput)) {
+                    m_totalError += m_error;
+                }
+
+                // Perform the primary PID calculation
+                m_result = (m_P * m_error + m_I * m_totalError + m_D * (m_error - m_prevError));
+
+                // Set the current error to the previous error for the next cycle
+                m_prevError = m_error;
+
+                // Make sure the final result is within bounds
+                if (m_result > m_maximumOutput) {
+                    m_result = m_maximumOutput;
+                } else if (m_result < m_minimumOutput) {
+                    m_result = m_minimumOutput;
+                }
+            }
+        }
+
+        /**
+         * Set the PID Controller gain parameters.
+         * Set the proportional, integral, and differential coefficients.
+         * @param p Proportional coefficient
+         * @param i Integral coefficient
+         * @param d Differential coefficient
+         */
+        public void setPID(double p, double i, double d) {
+            m_P = p;
+            m_I = i;
+            m_D = d;
+        }
+
+        /**
+         * Return the current PID result
+         * This is always centered on zero and constrained the the max and min outs
+         * @return the latest calculated output
+         */
+        public double performPID() {
+            calculate();
+            return m_result;
+        }
+
+        /**
+         *  Set the PID controller to consider the input to be continuous,
+         *  Rather then using the max and min in as constraints, it considers them to
+         *  be the same point and automatically calculates the shortest route to
+         *  the setpoint.
+         * @param continuous Set to true turns on continuous, false turns off continuous
+         */
+        public void setContinuous(boolean continuous) {
+            m_continuous = continuous;
+        }
+
+        /**
+         *  Set the PID controller to consider the input to be continuous,
+         *  Rather then using the max and min in as constraints, it considers them to
+         *  be the same point and automatically calculates the shortest route to
+         *  the setpoint.
+         */
+        public void setContinuous() {
+            this.setContinuous(true);
+        }
+
+        /**
+         * Sets the maximum and minimum values expected from the input.
+         *
+         * @param minimumInput the minimum value expected from the input
+         * @param maximumInput the maximum value expected from the output
+         */
+        public void setInputRange(double minimumInput, double maximumInput) {
+            m_minimumInput = minimumInput;
+            m_maximumInput = maximumInput;
+            setSetpoint(m_setpoint);
+        }
+
+        /**
+         * Sets the minimum and maximum values to write.
+         *
+         * @param minimumOutput the minimum value to write to the output
+         * @param maximumOutput the maximum value to write to the output
+         */
+        public void setOutputRange(double minimumOutput, double maximumOutput) {
+            m_minimumOutput = minimumOutput;
+            m_maximumOutput = maximumOutput;
+        }
+
+        /**
+         * Set the setpoint for the PIDController
+         * @param setpoint the desired setpoint
+         */
+        public void setSetpoint(double setpoint) {
+            if (m_maximumInput > m_minimumInput) {
+                if (setpoint > m_maximumInput) {
+                    m_setpoint = m_maximumInput;
+                } else if (setpoint < m_minimumInput) {
+                    m_setpoint = m_minimumInput;
+                } else {
+                    m_setpoint = setpoint;
+                }
+            } else {
+                m_setpoint = setpoint;
+            }
+        }
+
+        /**
+         * Returns the current setpoint of the PIDController
+         * @return the current setpoint
+         */
+        public double getSetpoint() {
+            return m_setpoint;
+        }
+
+        /**
+         * Retruns the current difference of the input from the setpoint
+         * @return the current error
+         */
+        public double getError() {
+            return m_error;
+        }
+
+        /**
+         * Set the percentage error which is considered tolerable for use with
+         * OnTarget. (Input of 15.0 = 15 percent)
+         * @param percent error which is tolerable
+         */
+        public void setTolerance(double percent) {
+            m_tolerance = percent;
+        }
+
+        /**
+         * Return true if the error is within the percentage of the total input range,
+         * determined by setTolerance. This asssumes that the maximum and minimum input
+         * were set using setInput.
+         * @return true if the error is less than the tolerance
+         */
+        public boolean onTarget() {
+            return (abs(m_error) < m_tolerance / 100 *
+                    (m_maximumInput - m_minimumInput));
+        }
+
+        /**
+         * Begin running the PIDController
+         */
+        public void enable() {
+            m_enabled = true;
+        }
+
+        /**
+         * Stop running the PIDController, this sets the output to zero before stopping.
+
+         */
+        public void disable() {
+            m_enabled = false;
+        }
+
+        /**
+         * Reset the previous error,, the integral term, and disable the controller.
+         */
+        public void reset() {
+            disable();
+            m_prevError = 0;
+            m_totalError = 0;
+            m_result = 0;
+        }
+
+        public void setInput(double input) {
+            m_input = input;
+        }
+
     }
 }
