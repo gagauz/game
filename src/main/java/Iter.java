@@ -26,7 +26,7 @@ public class Iter {
         File dir = new File(args[0]);
         float a0 = Float.parseFloat(args[1]);// -0.5;
         float a1 = Float.parseFloat(args[2]);//  2;
-        float da = 0.1f;
+        float da = 0.5f;
 
         float b0 = Float.parseFloat(args[3]);//  -5;
         float b1 = Float.parseFloat(args[4]);//  5;
@@ -70,6 +70,12 @@ public class Iter {
                     for (float a = a0; a <= a1; a += da) {
                         for (float b = b0; b <= b1; b += db) {
                             for (float c = c0; c <= c1; c += dc) {
+                                float x = f * f * a + f * b + c;
+                                if (x < 0 || x > 4000)
+                                    continue;
+                                x = f1 * f1 * a + f1 * b + c;
+                                if (x < 0 || x > 4000)
+                                    continue;
                                 long t = System.currentTimeMillis();
                                 System.out.println("c=" + c);
                                 String s = "local-runner-console.bat" +

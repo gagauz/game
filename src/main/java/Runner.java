@@ -12,16 +12,17 @@ public final class Runner {
     private static MyStrategy strategy;
 
     public static void main(String[] args) throws IOException {
-        if (args.length == 6) {
+        if (args.length == 7) {
             double a = Double.parseDouble(args[0]);
             double b = Double.parseDouble(args[1]);
             double c = Double.parseDouble(args[2]);
             double d = Double.parseDouble(args[3]);
             double e = Double.parseDouble(args[4]);
             double f = Double.parseDouble(args[5]);
-            strategy = new MyStrategy(a, b, c, d, e, f);
+            double g = Double.parseDouble(args[6]);
+            strategy = new MyStrategy(a, b, c, d, e, f, g);
         } else {
-            strategy = new MyStrategy();
+            strategy = new MyStrategy(0, 0.5, 0.1, 1.1, 3.6000004, 15, 1.5000001);
         }
         //        if (args.length == 3) {
         //            new Runner(args).run();

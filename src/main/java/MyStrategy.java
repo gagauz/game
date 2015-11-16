@@ -216,13 +216,14 @@ public final class MyStrategy implements Strategy {
     public MyStrategy() {
     }
 
-    public MyStrategy(double a, double b, double c, double d, double e, double f) {
-        A = a;
-        B = b;
-        C = c;
-        D = d;
-        E = e;
-        turn_max_speed = f;
+    public MyStrategy(double a, double b, double c, double d, double e, double f, double g) {
+        inside_turn_factor = a;
+        outside_turn_factor = b;
+        mobility_factor = c;
+        mobility_2x_factor = d;
+        stability_factor = e;
+        turn_enter_offset_tiles = f;
+        turn_max_speed = g;
     }
 
     double getTurnEnterOffset(NextTurn turn) {
