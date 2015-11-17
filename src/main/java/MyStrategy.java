@@ -120,9 +120,9 @@ public final class MyStrategy implements Strategy {
     private static final double ANGLE_1 = PI / 180.0;
 
     private static double tile_size;
-    static double A = 0.01;
-    static double B = 0.05;
-    static double C = 1.3;
+    double A = 0.01;
+    double B = 0.05;
+    double C = 1.3;
 
     private Car self;
     private Car ally;

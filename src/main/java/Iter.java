@@ -35,33 +35,34 @@ public class Iter {
                 " " + d1 +
                 " " + e1 +
                 " " + f1);
-        for (float d = d0; d <= d1; d += dd) {
-            for (float e = e0; e <= e1; e += de) {
-                for (float f = f0; f <= f1; f += df) {
-                    for (float a = a0; a <= a1; a += da) {
-                        for (float b = b0; b <= b1; b += db) {
-                            for (float c = c0; c <= c1; c += dc) {
+        for (float a = a0; a <= a1; a += da) {
+            for (float b = b0; b <= b1; b += db) {
+                for (float c = c0; c <= c1; c += dc) {
+                    //                    for (float d = d0; d <= d1; d += dd) {
+                    //                        for (float e = e0; e <= e1; e += de) {
+                    //                            for (float f = f0; f <= f1; f += df) {
 
-                                long t = System.currentTimeMillis();
-                                System.out.println("c=" + c);
-                                String s = "local-runner-console-params.bat" +
-                                        " " + a +
-                                        " " + b +
-                                        " " + c +
-                                        " " + d +
-                                        " " + e +
-                                        " " + f;
-                                System.out.println(s);
-                                try {
-                                    Process p = Runtime.getRuntime().exec(s, null, dir);
-                                    p.waitFor();
-                                    System.out.println("Time: " + (System.currentTimeMillis() - t) + " ms");
-                                } catch (Exception ex) {
-                                    ex.printStackTrace();
-                                }
-                            }
-                        }
+                    long t = System.currentTimeMillis();
+                    System.out.println("c=" + c);
+                    String s = dir + "/local-runner-console-params.bat" +
+                            " " + a +
+                            " " + b +
+                            " " + c
+                    //                            " " + d +
+                    //                            " " + e +
+                    //                            " " + f
+                    ;
+                    System.out.println(s);
+                    try {
+                        Process p = Runtime.getRuntime().exec(s, null, dir);
+                        p.waitFor();
+                        System.out.println("Time: " + (System.currentTimeMillis() - t) + " ms");
+                    } catch (Exception ex) {
+                        ex.printStackTrace();
                     }
+                    //                            }
+                    //                        }
+                    //                    }
                 }
             }
         }
