@@ -1,8 +1,36 @@
-import model.*;
-
-import static java.lang.Math.*;
-import static model.Direction.*;
-import static model.TileType.*;
+import static java.lang.Math.PI;
+import static java.lang.Math.abs;
+import static java.lang.Math.atan;
+import static java.lang.Math.cos;
+import static java.lang.Math.max;
+import static java.lang.Math.pow;
+import static java.lang.Math.round;
+import static java.lang.Math.signum;
+import static java.lang.Math.sin;
+import static java.lang.Math.sqrt;
+import static java.lang.Math.tan;
+import static model.Direction.DOWN;
+import static model.Direction.LEFT;
+import static model.Direction.RIGHT;
+import static model.Direction.UP;
+import static model.TileType.BOTTOM_HEADED_T;
+import static model.TileType.CROSSROADS;
+import static model.TileType.LEFT_BOTTOM_CORNER;
+import static model.TileType.LEFT_HEADED_T;
+import static model.TileType.LEFT_TOP_CORNER;
+import static model.TileType.RIGHT_BOTTOM_CORNER;
+import static model.TileType.RIGHT_HEADED_T;
+import static model.TileType.RIGHT_TOP_CORNER;
+import static model.TileType.TOP_HEADED_T;
+import model.Bonus;
+import model.BonusType;
+import model.Car;
+import model.Direction;
+import model.Game;
+import model.Move;
+import model.TileType;
+import model.Unit;
+import model.World;
 
 public final class MyStrategy implements Strategy {
 
@@ -12,15 +40,15 @@ public final class MyStrategy implements Strategy {
     static double outside_turn_factor = 0.5;//0..1
     static double mobility_factor = 0.000003;
     static double double_turn_mobility_increment = 5;
-    static double double_turn_u_speed_decrement = 1.5;
+    static double double_turn_u_speed_decrement = 1.8;
     static double double_turn_z_speed_decrement = 1.0;
-    static double double_turn_z_end_angle = 40;
+    static double double_turn_z_end_angle = 45;
     static double double_turn_u_end_angle = 120;
     static double crossroad_speed_decrement = 10.0;
-    static double stability_factor = 25;
-    static double turn_max_speed = 17;//18;
+    static double stability_factor = 20;
+    static double turn_max_speed = 20;
     static double turn_max_angular_speed = 0.033;
-    static double turn_enter_offset_tiles = 1.2;
+    static double turn_enter_offset_tiles = 1.36;
     static double drift_speed = 26;
     static boolean enable_nitro = true;
     static boolean enable_turn_enter_offset = true;
@@ -99,9 +127,9 @@ public final class MyStrategy implements Strategy {
     private static final double ANGLE_1 = PI / 180.0;
 
     private static double tile_size;
-    double A = 0.0;
-    double B = 0.06;
-    double C = 1.34;
+    double A = 0.02;
+    double B = 0.1;
+    double C = 1.36;
     double D = 0.9;
     double E = 0.9;
 
@@ -166,7 +194,7 @@ public final class MyStrategy implements Strategy {
             this.distance = null != self ? self.getDistanceTo(x, y) : 0;
             this.entered = this.x == cx && this.y == cy;
             this.turnDirection = TURN_DIRECTION[currentDirection.ordinal()][this.direction1.ordinal()];
-            double[] c = getTurnTileInsideCornerCoord(this, tile_size / 2);
+            double[] c = getTurnTileInsideCornerCoord(this, tile_size / 2 + margins);
             this.cornerX = c[0];
             this.cornerY = c[1];
         }
@@ -206,12 +234,12 @@ public final class MyStrategy implements Strategy {
     private Direction direction;
     private Bonus bonus;
 
-    private int turnCount = 0;
     private int tickTr = 0;
     private int staleMoveDelay;
 
     private Delegate delegate;
     private double turnEnterOffset = 0;
+    private double insideTurnFactor = 0;
 
     double speedAvg;
     int tickCount;
@@ -270,14 +298,16 @@ public final class MyStrategy implements Strategy {
             direction = world.getStartingDirection();
             lastCenterXY = getTileCenter(getCenter(cx, cy));
             wayPointIndex = 1;
-            oldWayPointX = world.getWaypoints()[wayPointIndex][0];
-            oldWayPointY = world.getWaypoints()[wayPointIndex][1];
+            oldWayPointX = world.getWaypoints()[0][0];
+            oldWayPointY = world.getWaypoints()[0][1];
             wayPointX = self.getNextWaypointX();
             wayPointY = self.getNextWaypointY();
+            insideTurnFactor = inside_turn_factor;
         }
         centerXY = lastCenterXY;
 
         if (cx == wayPointX && cy == wayPointY) {
+            log("Waypoint [" + cx + "," + cy + "] cleared.");
             wayPointIndex++;
             if (wayPointIndex >= world.getWaypoints().length) {
                 wayPointIndex = 0;
@@ -325,10 +355,10 @@ public final class MyStrategy implements Strategy {
         lastSpeedY = self.getSpeedY();
 
         //        log("X=" + self.getX() + ", Y=" + self.getY() + ", A=" + self.getAngle() + ", Vx=" + self.getSpeedX() + ", Vy=" + self.getSpeedY());
-        if (speed > maxSpeed) {
-            log("limit max speed " + (maxSpeed / speed));
-            move.setEnginePower(maxSpeed / speed);
-        }
+        //        if (speed > maxSpeed) {
+        //            log("limit max speed " + (maxSpeed / speed));
+        //            move.setEnginePower(maxSpeed / speed);
+        //        }
         if (!self.isFinishedTrack() && world.getTick() > game.getInitialFreezeDurationTicks()) {
             tickCount++;
             speedAvg += speed;
@@ -369,7 +399,7 @@ public final class MyStrategy implements Strategy {
         }
     }
 
-    double getTurnDelay(double offset) {
+    double getTurnDelay() {
 
         double offsetSide = getCenter(self.getX(), self.getY()) - lastCenterXY;
         offsetSide = offsetSide * TURN_OFFSET_OUT[direction.ordinal()][currentTurn.direction1.ordinal()];
@@ -395,11 +425,10 @@ public final class MyStrategy implements Strategy {
         if (null != currentTurn) {
             double dist = currentTurn.distanceTo();
 
-            double start = getTurnDelay(turnEnterOffset);
-            //            if (speed > drift_speed) {
-            //                start = speed / drift_speed * turnEnterOffset;
-            //            } else 
-            if (null != doubleTurn) {
+            double start = getTurnDelay();
+            if (speed > drift_speed) {
+                start = speed / drift_speed * turnEnterOffset;
+            } else if (null != doubleTurn) {
                 start = doubleTurn.direction1 != direction ? turnEnterOffset * D : turnEnterOffset * E;
             }
 
@@ -409,7 +438,10 @@ public final class MyStrategy implements Strategy {
                     double side = TURN_DIRECTION[direction.ordinal()][currentTurn.direction1.ordinal()];
                     if (side != 0.0) {
                         log("--------------------------------------------------------------------------------------------------------------------");
-                        log("Turn started: " + currentTurn
+                        log(currentTurn.direction0 + " -> " + currentTurn.direction1 + " " + currentTurn.tile + " ["
+                                + currentTurn.tileX + ","
+                                + currentTurn.tileY + "] "
+                                + currentTurn.turnDirection
                                 + ", start=" + start + ", dist=" + dist + ", speed=" + speed);
                         if (null != doubleTurn) {
                             log("DoubleTurn detected: " + doubleTurn);
@@ -488,7 +520,7 @@ public final class MyStrategy implements Strategy {
                 d1 = self.getDistanceTo(x, y);
                 double a2 = -a1 * OFFS_ANGLE_SIGN[direction.ordinal()][currentTurn.direction1.ordinal()];
                 if (d1 < dist) {
-                    if (a2 < -ANGLE_5) {
+                    if (a2 < 0) {
                         log("Avoid corner x=" + x + ", y=" + y + ", a=" + a1 + ", d=" + d1
                                 + " self.x=" + self.getX()
                                 + " self.y=" + self.getY()
@@ -507,7 +539,7 @@ public final class MyStrategy implements Strategy {
                 if (self.getId() != car.getId()) {
                     d2 = self.getDistanceTo(car);
                     double a = self.getAngleTo(car);
-                    if (abs(tan(a) * d2) < car.getWidth() / 2) {
+                    if (abs(a) < ANGLE_30 && abs(tan(a) * d2) < car.getWidth() / 2) {
                         carToAvoid = car;
                         dist = d2;
                     }
@@ -517,7 +549,7 @@ public final class MyStrategy implements Strategy {
         if (null != carToAvoid) {
             double a2 = self.getAngleTo(carToAvoid);
             a1 = a1 * d1 / d2;
-            a2 = -a2 * (angle - abs(a2)) / angle * d2 / d1;
+            a2 = a2 * (angle - abs(a2)) / angle * d2 / d1;
 
             log("Avoid car a1=" + a1 + ", a2=" + a2 + ", d1=" + d1 + ", d2=" + d2);
             if (signum(a2) == signum(a1)) {
@@ -545,7 +577,7 @@ public final class MyStrategy implements Strategy {
             boolean increaseMobility = false;
 
             if (enable_turn_enter_offset && null != currentTurn) {
-                double m = currentTurn.distanceTo() < tile_size && speed < turnMaxSpeed ? -inside_turn_factor : outside_turn_factor;
+                double m = currentTurn.distanceTo() < tile_size && speed < turnMaxSpeed ? -insideTurnFactor : outside_turn_factor;
 
                 if (speed > drift_speed) {
                     m = 1;
@@ -589,7 +621,7 @@ public final class MyStrategy implements Strategy {
                     double dist = self.getDistanceTo(b);
                     if (abs(self.getAngleTo(b)) < ANGLE_90) {
                         if (dist < closestXY) {
-                            double dxy = lastCenterXY - getCenter(b.getX(), b.getY());
+                            double dxy = getCenter(self.getX(), self.getY()) - getCenter(b.getX(), b.getY());
                             if (abs(dxy) < fromCenterToBorder) {
                                 int x = getTileXY(b.getX());
                                 int y = getTileXY(b.getY());
@@ -744,18 +776,25 @@ public final class MyStrategy implements Strategy {
     }
 
     void checkCanThrowProjectile() {
-        if (self.getProjectileCount() > 0)
+        if (self.getProjectileCount() > 0) {
             if (checkCloseAngle(0, self.getHeight(), fireMaxDistance)) {
                 move.setThrowProjectile(true);
-                move.setThrowProjectile(true);
             }
+        }
+        if (self.getOilCanisterCount() > 0) {
+            if (null != currentTurn && currentTurn.distance < speed / turnMaxSpeed * tile_size) {
+                if (checkCloseAngle(ANGLE_180, tile_size, oilMaxDistance)) {
+                    move.setSpillOil(true);
+                }
+            }
+        }
     }
 
     boolean isCanUseNitro() {
         if (null != currentTurn) {
             return (currentTurn.distanceTo() > tile_size * 4 && abs(getOffsetAngle()) < ANGLE_5);
         }
-        return true;
+        return false;
     }
 
     void checkNitro() {
@@ -832,7 +871,6 @@ public final class MyStrategy implements Strategy {
 
     class Turn implements Delegate {
 
-        boolean hasCarInBack;
         boolean enteredTurnTile;
         double endAngle = ANGLE_1 * 70;
         double turnSpeedStart;
@@ -843,7 +881,6 @@ public final class MyStrategy implements Strategy {
             tickTr = 0;
             turnAngleBegin = getRightAngle();
             debugOffsets();
-            hasCarInBack = self.getOilCanisterCount() > 0 && checkCloseAngle(ANGLE_180, 3 * tile_size, oilMaxDistance);
             side = currentTurn.turnDirection;
             turning = true;
             enteredTurnTile = cx == currentTurn.tileX && cy == currentTurn.tileY;
@@ -872,9 +909,7 @@ public final class MyStrategy implements Strategy {
             double delta = abs(abs(self.getAngle()) - abs(turnAngleBegin));
 
             if (null == doubleTurn)
-                turnMaxSpeed = turnSpeedStart + 0.3 * turnSpeedStart * delta / ANGLE_90;
-
-            checkBrake();
+                turnMaxSpeed = turnSpeedStart + 0.3 * turnSpeedStart * delta / endAngle;
 
             boolean inside = cx == currentTurn.tileX && cy == currentTurn.tileY;
 
@@ -888,21 +923,11 @@ public final class MyStrategy implements Strategy {
                 direction = currentTurn.direction1;
             }
 
-            double turnDelay = 0;
-
             //            if (enteredTurnTile && null == doubleTurn) {
             //                turnDelay = 0;//ANGLE_60 * 2 * OFFSET[direction.ordinal()] * getOffsetCenter() / tile_size;
             //            }
 
-            if (isBackward
-                    && turnCount > 1
-                    && hasCarInBack
-                    && enteredTurnTile) {
-                move.setSpillOil(true);
-                hasCarInBack = false;
-            }
-
-            if ((enteredTurnTile && delta >= endAngle + turnDelay) ||
+            if ((enteredTurnTile && delta >= endAngle) ||
                     (enteredTurnTile && !inside)) {
                 log("Turn finished: Angle is " + self.getAngle() + ", delta is " + delta);
                 debugOffsets();
@@ -913,6 +938,7 @@ public final class MyStrategy implements Strategy {
                 doubleTurn = null;
                 delegate = null;
                 turning = false;
+                insideTurnFactor = inside_turn_factor;
                 if (!inside && isTurnTileType(cx, cy)) {
                     Direction dir = resolveDirectionAfterTurn(cx, cy, direction);
                     if (dir != direction) {
@@ -920,13 +946,14 @@ public final class MyStrategy implements Strategy {
                         currentTurn = new NextTurn(cx, cy, direction, dir);
                     }
                 }
+                return;
             } else {
                 //                double w = (turn_max_angular_speed - abs(self.getAngularSpeed())) / turn_max_angular_speed;
                 //                (speed > drift_speed || inside ? 1 : 0.5)
-                move.setWheelTurn(get());
+                move.setWheelTurn(get() * (endAngle - delta) / endAngle);
                 checkBrake();
             }
-            if (speed < drift_speed && null != currentTurn)
+            if (speed < drift_speed)
                 avoidCollisions(currentTurn.cornerX, currentTurn.cornerY);
             //            checkStraight();
             checkCanThrowProjectile();
@@ -1055,50 +1082,70 @@ public final class MyStrategy implements Strategy {
                 }
             }
 
-            int oldWayPointX = self.getNextWaypointX();
-            int oldWayPointY = self.getNextWaypointY();
+            //            int oldWayPointX = self.getNextWaypointX();
+            //            int oldWayPointY = self.getNextWaypointY();
+
+            int[] wps = getNextWayPointXYFromIndex(wayPointIndex);
+            int wpX = self.getNextWaypointX();
+            int wpY = self.getNextWaypointY();
+            int wpX1 = cx == oldWayPointX ? self.getNextWaypointX() : oldWayPointX;
+            int wpX2 = cx == oldWayPointX ? wps[0] : self.getNextWaypointX();
+            int wpY1 = cy == oldWayPointY ? self.getNextWaypointY() : oldWayPointY;
+            int wpY2 = cy == oldWayPointY ? wps[1] : self.getNextWaypointY();
 
             if (nextTile == BOTTOM_HEADED_T) {
                 if (UP == dir) {
                     log("UP == dir");
-                    log("wayPointX > oldWayPointX ? RIGHT : LEFT");
-                    return wayPointX > oldWayPointX ? RIGHT : LEFT;
+                    log("wpX2 > wpX1 ? RIGHT : LEFT");
+                    return wpX2 > wpX1 ? RIGHT : LEFT;
                 }
 
-                if ((LEFT == dir || RIGHT == dir) && wayPointY > oldWayPointY) {
-                    log("(LEFT == dir || RIGHT == dir) && wayPointY > oldWayPointY");
-                    return DOWN;
+                if (wpY != y || (dir == LEFT && x <= wpX) || (dir == RIGHT && x >= wpX)) {
+
+                    if (wpY2 == wpY1) {
+                        if (LEFT == dir && wpX1 < wpX2) {
+                            log("LEFT == dir && wpX1 < wpX2");
+                            return DOWN;
+                        }
+                        if (RIGHT == dir && wpX1 > wpX2) {
+                            log("RIGHT == dir && wpX1 > wpX2");
+                            return DOWN;
+                        }
+                    }
+
+                    if ((LEFT == dir || RIGHT == dir) && wpY2 > wpY1) {
+                        log("(LEFT == dir || RIGHT == dir) && wpY2 > wpY1");
+                        return DOWN;
+                    }
                 }
 
-                if (wayPointY == oldWayPointY) {
-                    if (LEFT == dir && oldWayPointX < wayPointX) {
-                        log("LEFT == dir && oldWayPointX < wayPointX");
-                        return DOWN;
-                    }
-                    if (RIGHT == dir && oldWayPointX > wayPointX) {
-                        log("RIGHT == dir && oldWayPointX > wayPointX");
-                        return DOWN;
-                    }
-                }
             }
             if (nextTile == TOP_HEADED_T) {
                 if (DOWN == dir) {
                     log("DOWN == dir");
-                    log("oldWayPointX < wayPointX ? RIGHT : LEFT");
-                    return oldWayPointX < wayPointX ? RIGHT : LEFT;
-                }
-                if ((LEFT == dir || RIGHT == dir) && oldWayPointY > wayPointY) {
-                    log("(LEFT == dir || RIGHT == dir) && oldWayPointY > wayPointY");
-                    return UP;
+                    log("wpX1 < wpX2 ? RIGHT : LEFT");
+                    return wpX1 < wpX2 ? RIGHT : LEFT;
                 }
 
-                if (wayPointY == oldWayPointY) {
-                    if (LEFT == dir && oldWayPointX < wayPointX) {
-                        log("LEFT == dir && oldWayPointX < wayPointX");
+                if (wpY != y || (dir == LEFT && x <= wpX) || (dir == RIGHT && x >= wpX)) {
+                    if (wpY2 == wpY1) {
+                        if (LEFT == dir && wpX1 < wpX2) {
+                            log("LEFT == dir && wpX1 < wpX2");
+                            return UP;
+                        }
+                        if (RIGHT == dir && wpX1 > wpX2) {
+                            log("RIGHT == dir && wpX1 > wpX2");
+                            return UP;
+                        }
+                    }
+
+                    if (LEFT == dir && wpY1 > wpY2) {
+                        log("(LEFT == dir || RIGHT == dir) && wpY1 > wpY2");
                         return UP;
                     }
-                    if (RIGHT == dir && oldWayPointX > wayPointX) {
-                        log("RIGHT == dir && oldWayPointX > wayPointX");
+
+                    if ((LEFT == dir || RIGHT == dir) && wpY1 > wpY2) {
+                        log("(LEFT == dir || RIGHT == dir) && wpY1 > wpY2");
                         return UP;
                     }
                 }
@@ -1106,43 +1153,44 @@ public final class MyStrategy implements Strategy {
             if (nextTile == LEFT_HEADED_T) {
                 if (RIGHT == dir) {
                     log("RIGHT == dir");
-                    log("oldWayPointY < wayPointY ? DOWN : UP");
-                    return oldWayPointY < wayPointY ? DOWN : UP;
+                    log("wpY1 < wpY2 ? DOWN : UP");
+                    return wpY1 < wpY2 ? DOWN : UP;
                 }
-                if ((UP == dir || DOWN == dir) && oldWayPointX > wayPointX) {
-                    log("(UP == dir || DOWN == dir) && oldWayPointX > wayPointX");
+
+                if (wpX1 == wpX2) {
+                    if (UP == dir && wpY1 < wpY2) {
+                        log("UP == dir && wpY1 < wpY2");
+                        return LEFT;
+                    }
+                    if (DOWN == dir && wpY1 > wpY2) {
+                        log("DOWN == dir && wpY1 > wpY2");
+                        return LEFT;
+                    }
+                }
+                if ((UP == dir || DOWN == dir) && wpX1 > wpX2) {
+                    log("(UP == dir || DOWN == dir) && wpX1 > wpX2");
                     return LEFT;
-                }
-                if (oldWayPointX == wayPointX) {
-                    if (UP == dir && oldWayPointY < wayPointY) {
-                        log("UP == dir && oldWayPointY < wayPointY");
-                        return LEFT;
-                    }
-                    if (DOWN == dir && oldWayPointY > wayPointY) {
-                        log("DOWN == dir && oldWayPointY > wayPointY");
-                        return LEFT;
-                    }
                 }
             }
             if (nextTile == RIGHT_HEADED_T) {
                 if (LEFT == dir) {
                     log("LEFT == dir");
-                    log("oldWayPointY < wayPointY ? DOWN : UP");
-                    return oldWayPointY < wayPointY ? DOWN : UP;
+                    log("wpY1 < wpY2 ? DOWN : UP");
+                    return wpY1 < wpY2 ? DOWN : UP;
                 }
-                if ((UP == dir || DOWN == dir) && oldWayPointX < wayPointX) {
-                    log("(UP == dir || DOWN == dir) && oldWayPointX < wayPointX");
+                if (wpX1 == wpX2) {
+                    if (UP == dir && wpY1 < wpY2) {
+                        log("UP == dir && wpY1 < wpY2");
+                        return LEFT;
+                    }
+                    if (DOWN == dir && wpY1 > wpY2) {
+                        log("DOWN == dir && wpY1 > wpY2");
+                        return LEFT;
+                    }
+                }
+                if ((UP == dir || DOWN == dir) && wpX1 < wpX2) {
+                    log("(UP == dir || DOWN == dir) && wpX1 < wpX2");
                     return RIGHT;
-                }
-                if (oldWayPointX == wayPointX) {
-                    if (UP == dir && oldWayPointY < wayPointY) {
-                        log("UP == dir && oldWayPointY < wayPointY");
-                        return LEFT;
-                    }
-                    if (DOWN == dir && oldWayPointY > wayPointY) {
-                        log("DOWN == dir && oldWayPointY > wayPointY");
-                        return LEFT;
-                    }
                 }
             }
             //            boolean isCrossroadWaypoint = wayPointX == x && wayPointY == y;
@@ -1232,6 +1280,14 @@ public final class MyStrategy implements Strategy {
                 || (CROSSROADS == type);
     }
 
+    boolean isAlwaysTurnTileType(int x, int y) {
+        TileType type = world.getTilesXY()[x][y];
+        return (LEFT_TOP_CORNER == type)
+                || (LEFT_BOTTOM_CORNER == type)
+                || (RIGHT_BOTTOM_CORNER == type)
+                || (RIGHT_TOP_CORNER == type);
+    }
+
     double getEndSpeed(double dist) {
         if (0 == accel)
             return speed;
@@ -1266,7 +1322,7 @@ public final class MyStrategy implements Strategy {
         int[] wp = getNextWayPointXYFromIndex(wayPointIndex);
         log(direction + "[" + cx + "," + cy + "]"
                 + " wp=" + world.getTilesXY()[self.getNextWaypointX()][self.getNextWaypointY()]
-                + "[" + self.getNextWaypointX()
+                + " [" + self.getNextWaypointX()
                 + "," + self.getNextWaypointY()
                 + "] next wp=" + world.getTilesXY()[wp[0]][wp[1]] + "[" + wp[0] + "," + wp[1] + "]"
                 + " self=" + round(getCenter(self.getX(), self.getY()))
