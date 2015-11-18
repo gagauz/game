@@ -1,13 +1,43 @@
-import model.*;
+import static java.lang.Math.PI;
+import static java.lang.Math.abs;
+import static java.lang.Math.atan;
+import static java.lang.Math.cos;
+import static java.lang.Math.max;
+import static java.lang.Math.pow;
+import static java.lang.Math.round;
+import static java.lang.Math.signum;
+import static java.lang.Math.sin;
+import static java.lang.Math.sqrt;
+import static java.lang.Math.tan;
+import static model.Direction.DOWN;
+import static model.Direction.LEFT;
+import static model.Direction.RIGHT;
+import static model.Direction.UP;
+import static model.TileType.BOTTOM_HEADED_T;
+import static model.TileType.CROSSROADS;
+import static model.TileType.LEFT_BOTTOM_CORNER;
+import static model.TileType.LEFT_HEADED_T;
+import static model.TileType.LEFT_TOP_CORNER;
+import static model.TileType.RIGHT_BOTTOM_CORNER;
+import static model.TileType.RIGHT_HEADED_T;
+import static model.TileType.RIGHT_TOP_CORNER;
+import static model.TileType.TOP_HEADED_T;
 
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
+import java.util.Comparator;
 import java.util.List;
 
-import static java.lang.Math.*;
-import static model.Direction.*;
-import static model.TileType.*;
+import model.Bonus;
+import model.BonusType;
+import model.Car;
+import model.Direction;
+import model.Game;
+import model.Move;
+import model.TileType;
+import model.Unit;
+import model.World;
 
 public final class MyStrategy implements Strategy {
 
@@ -19,10 +49,9 @@ public final class MyStrategy implements Strategy {
     static double double_turn_mobility_increment = 5;
     static double double_turn_u_speed_decrement = 1.8;
     static double double_turn_z_speed_decrement = 1.0;
-    static double double_turn_z_end_angle = 45;
-    static double double_turn_u_end_angle = 90;
-    static double crossroad_speed_decrement = 10.0;
-    static double stability_factor = 20;
+    static double double_turn_z_end_angle = 40;
+    static double double_turn_u_end_angle = 120;
+    static double stability_factor = 19;
     static double turn_max_speed = 18;
     static double turn_max_angular_speed = 0.033;
     static double turn_enter_offset_tiles = 0;
@@ -106,7 +135,7 @@ public final class MyStrategy implements Strategy {
     private static double tile_size;
     double A = 0.0;
     double B = 0.06;
-    double C = 1.20;
+    double C = 1.30;
     double D = 0.9;
     double E = 0.9;
 
@@ -324,8 +353,6 @@ public final class MyStrategy implements Strategy {
             oldWayPointY = wayPointY;
             wayPointX = world.getWaypoints()[wayPointIndex][0];
             wayPointY = world.getWaypoints()[wayPointIndex][1];
-            if (!currentTurn.turning)
-                currentTurn = null;
         }
 
         double speed0 = sqrt(pow(self.getSpeedX(), 2) + pow(self.getSpeedY(), 2));
@@ -426,7 +453,7 @@ public final class MyStrategy implements Strategy {
             int y = null != lastTurn ? lastTurn.tileY : cy;
             currentTurn = findNextTurnFrom(x, y, direction, Integer.MAX_VALUE);
             if (null != currentTurn) {
-                doubleTurn = findNextTurnFrom(currentTurn.tileX, currentTurn.tileY, currentTurn.direction1, 0);
+                doubleTurn = findNextTurnFrom(currentTurn.tileX, currentTurn.tileY, currentTurn.direction1, 1);
                 log("Next turn detected: " + currentTurn + " double : " + doubleTurn);
             }
         }
@@ -1209,10 +1236,10 @@ public final class MyStrategy implements Strategy {
 
     Direction[][][] DIRECTION_MATRIX = new Direction[][][] {
             //E     V      H        LTC      RTC      LBC      RBC     LHT           RHT            THT            BHT            C
-            {null, null, null, {DOWN}, null, {UP}, null, {UP, DOWN}, null, {LEFT, UP}, {LEFT, DOWN}, {LEFT, UP, DOWN}},//L
-            {null, null, null, null, {DOWN}, null, {UP}, null, {UP, DOWN}, {RIGHT, UP}, {RIGHT, DOWN}, {RIGHT, UP, DOWN}},//R
-            {null, null, null, {RIGHT}, {LEFT}, null, null, {UP, LEFT}, {UP, RIGHT}, null, {LEFT, RIGHT}, {UP, LEFT, RIGHT}},//U
-            {null, null, null, null, null, {RIGHT}, {LEFT}, {DOWN, LEFT}, {DOWN, RIGHT}, {LEFT, RIGHT}, null, {DOWN, LEFT, RIGHT}}//D
+            {null, null, {LEFT}, {DOWN}, null, {UP}, null, null, {UP, DOWN}, {LEFT, UP}, {LEFT, DOWN}, {LEFT, UP, DOWN}},//L
+            {null, null, {RIGHT}, null, {DOWN}, null, {UP}, {UP, DOWN}, null, {RIGHT, UP}, {RIGHT, DOWN}, {RIGHT, UP, DOWN}},//R
+            {null, {UP}, null, {RIGHT}, {LEFT}, null, null, {UP, LEFT}, {UP, RIGHT}, null, {LEFT, RIGHT}, {UP, LEFT, RIGHT}},//U
+            {null, {DOWN}, null, null, null, {RIGHT}, {LEFT}, {DOWN, LEFT}, {DOWN, RIGHT}, {LEFT, RIGHT}, null, {DOWN, LEFT, RIGHT}}//D
     };
 
     static int branchIndex = 0;
@@ -1280,23 +1307,44 @@ public final class MyStrategy implements Strategy {
         }
     }
 
-    void resolveClosestWayToTheNextWaypoint(int fromX, int fromY, int waypointIndex, WayResolver path, boolean[][] visited) {
+    Direction[] sortDirections(final Direction[] array, final int x, final int y, final int[] waypoint) {
+        Comparator<Direction> c = new Comparator<Direction>() {
+            @Override
+            public int compare(Direction o1, Direction o2) {
+                if (LEFT == o1 && RIGHT == o2) {
+                    if (LEFT == o1) {
+                        return waypoint[0] - x;
+                    } else {
+                        return x - waypoint[0];
+                    }
+                } else if (UP == o1 && DOWN == o2) {
+                    if (UP == o1) {
+                        return waypoint[1] - y;
+                    } else {
+                        return y - waypoint[1];
+                    }
+                }
+                return 0;
+            }
+        };
+        Direction[] array2 = new Direction[array.length];
+        System.arraycopy(array, 0, array2, 0, array.length);
+        Arrays.sort(array2, c);
+        return array2;
+    }
 
-        System.out.println("Enter: " + path.direction + " [" + fromX + "," + fromY + "], waypointIndex=" + waypointIndex + " ["
+    void resolveClosestWayToTheNextWaypoint(int fromX, int fromY, int waypointIndex, WayResolver resolver, boolean[][] visited) {
+
+        System.out.println("Enter: " + resolver.direction + " [" + fromX + "," + fromY + "], waypointIndex=" + waypointIndex + " ["
                 + world.getWaypoints()[waypointIndex][0]
                 + "," + world.getWaypoints()[waypointIndex][1] + "]");
 
         //Limit lookup
-        if (path.getTurnCount() > 5) {
-            path.exited = true;
-            System.out.println("Exit: " + path + " Limit reached for " + path);
+        if (resolver.getTurnCount() > 5) {
+            resolver.exited = true;
+            System.out.println("Exit: " + resolver + " Limit reached for " + resolver);
             return;
         }
-
-        //        if (path.waypoint) {
-        //            System.out.println("Exit: Path has already found waypoint" + path);
-        //            return;
-        //        }
 
         //        if (visited[fromX][fromY]) {
         //            path.invalid = true;
@@ -1304,80 +1352,95 @@ public final class MyStrategy implements Strategy {
         //            return;
         //        }
 
-        int[] nextWaypoints = world.getWaypoints()[waypointIndex];
-        Direction fromDir = path.direction;
+        final int[] nextWaypoints = world.getWaypoints()[waypointIndex];
+        final Direction fromDir = resolver.direction;
 
         int dX = NEXT_TURN_DELTAS[fromDir.ordinal()][0];
         int dY = NEXT_TURN_DELTAS[fromDir.ordinal()][1];
         int maxX = world.getWidth();
         int maxY = world.getHeight();
         for (int x = fromX + dX, y = fromY + dY; x < maxX && y < maxY && x > -1 && y > -1; x = x + dX, y = y + dY) {
+
+            final TileType tile = world.getTilesXY()[x][y];
+
+            final Direction[] directions = DIRECTION_MATRIX[fromDir.ordinal()][tile.ordinal()];
+
+            if (null == directions) {
+                break;
+            }
+
+            if (x == nextWaypoints[0] && y == nextWaypoints[1]) {
+                //If fouded at least 2 waypoints, stop
+                log("Exit: " + resolver + " Waypoint founded, exit this way");
+                resolver.waypoint = true;
+                return;
+            } else if (waypoints[x][y]) {
+                // Exclude path that leads to waypoints out off order
+                log("Exit: " + resolver + " Invalid waypoint founded, exit this way");
+                resolver.exited = true;
+                return;
+            }
+
+            if (directions.length == 1 && fromDir == directions[0]) {
+                continue;
+            }
+
             if (!visited[x][y]) {
                 visited[x][y] = true;
-                if (x == nextWaypoints[0] && y == nextWaypoints[1]) {
-                    //If fouded at least 2 waypoints, stop
-                    System.out.println("Exit: " + path + " Waypoint founded, exit this way");
-                    path.waypoint = true;
-                    return;
-                } else if (waypoints[x][y]) {
-                    // Exclude path that leads to waypoints out off order
-                    System.out.println("Exit: " + path + " Invalid waypoint founded, exit this way");
-                    path.invalid = true;
-                    return;
-                }
-
-                TileType tile = world.getTilesXY()[x][y];
-                Direction[] directions = DIRECTION_MATRIX[fromDir.ordinal()][tile.ordinal()];
-                //System.out.println("Traversing: " + tile + " [" + x + "," + y + "]");
 
                 if (null != directions) {
-                    System.out.println("Directions [" + x + "," + y + "] " + Arrays.asList(directions));
+                    log("Directions [" + x + "," + y + "] " + Arrays.asList(directions));
                     if (directions.length == 1) {
-                        WayResolver wr = new WayResolver(directions[0], path, x, y);
-                        resolveClosestWayToTheNextWaypoint(x, y, waypointIndex, wr, visited);
-                        System.out.println("Exit: " + path + " single way is " + wr);
-                        path.turnCount = wr.turnCount;
-                        if (wr.invalid) {
-                            path.invalid = true;
+                        WayResolver way = new WayResolver(directions[0], resolver, x, y);
+                        resolveClosestWayToTheNextWaypoint(x, y, waypointIndex, way, visited);
+                        log("Exit: " + resolver + " single way is " + way);
+                        resolver.turnCount = way.turnCount;
+                        if (way.invalid) {
+                            resolver.invalid = true;
                         }
-                        if (wr.waypoint) {
-                            path.waypoint = true;
+                        if (way.exited) {
+                            resolver.exited = true;
+                        }
+                        if (way.waypoint) {
+                            resolver.waypoint = true;
                         }
                     } else {
+                        //                        Direction[] directions2 = sortDirections(directions, x, y, nextWaypoints);
                         List<WayResolver> ways = new ArrayList<>(directions.length);
                         for (Direction d : directions) {
-                            WayResolver wr = new WayResolver(d, path, x, y);
+                            WayResolver wr = new WayResolver(d, resolver, x, y);
                             resolveClosestWayToTheNextWaypoint(x, y, waypointIndex, wr, visited);
-                            ways.add(wr);
+                            if (!wr.exited)
+                                ways.add(wr);
                         }
                         if (!ways.isEmpty()) {
                             Collections.sort(ways);
-                            System.out.println("Exit: " + path + " closest way is " + ways.get(0));
-                            path.turnCount = ways.get(0).turnCount;
+                            log("Exit: " + resolver + " closest way is " + ways.get(0));
+                            resolver.turnCount = ways.get(0).turnCount;
                             if (ways.get(0).invalid) {
-                                path.invalid = true;
+                                resolver.invalid = true;
                             }
                             if (ways.get(0).waypoint) {
-                                path.waypoint = true;
+                                resolver.waypoint = true;
                             }
                         }
                     }
                 }
             } else {
-                System.out.println("Skip: [" + x + "," + y + "] is visited");
-                path.invalid = true;
-                return;
+                log("Skip: [" + x + "," + y + "] is visited");
+                //resolver.invalid = true;
+                //return;
             }
         }
-        path.exited = true;
-        System.out.println("Exit: " + path + " No suitable directions");
+        resolver.exited = true;
+        log("Exit: " + resolver + " No suitable directions");
     }
 
     WayResolver getDirectionForClosestWayToTheNextWaypoint(int fromX, int fromY, Direction dir, int waypointIndex, int limit) {
 
         int[] nextWaypoints = world.getWaypoints()[waypointIndex];
 
-        System.out.println("Enter: " + dir + " [" + fromX + "," + fromY + "], waypointIndex=" + waypointIndex + " ["
+        log("Enter: " + dir + " [" + fromX + "," + fromY + "], waypointIndex=" + waypointIndex + " ["
                 + world.getWaypoints()[waypointIndex][0]
                 + "," + world.getWaypoints()[waypointIndex][1] + "]");
 
@@ -1390,41 +1453,49 @@ public final class MyStrategy implements Strategy {
         visited[fromX][fromY] = true;
 
         for (int x = fromX + dX, y = fromY + dY, c = 0; x < maxX && y < maxY && x > -1 && y > -1 && c < limit; x = x + dX, y = y + dY, c++) {
-            TileType tile = world.getTilesXY()[x][y];
-            System.out.println("Tile [" + x + "," + y + "] " + tile);
-            visited[x][y] = true;
-            if (x == nextWaypoints[0] && y == nextWaypoints[1]) {
 
+            final TileType tile = world.getTilesXY()[x][y];
+            log("Tile [" + x + "," + y + "] " + tile);
+            final Direction[] directions = DIRECTION_MATRIX[dir.ordinal()][tile.ordinal()];
+
+            if (null == directions) {
+                break;
+            }
+
+            visited[x][y] = true;
+
+            if (directions.length == 1 && dir == directions[0]) {
+                continue;
+            }
+
+            if (x == nextWaypoints[0] && y == nextWaypoints[1]) {
                 waypointIndex++;
                 if (waypointIndex == world.getWaypoints().length) {
                     waypointIndex = 0;
                 }
-                System.out.println("Enter waypoint, increment. next is " + waypointIndex);
+                log("Enter waypoint, increment. next is " + waypointIndex);
             }
 
-            Direction[] directions = DIRECTION_MATRIX[dir.ordinal()][tile.ordinal()];
-            if (null != directions) {
-                System.out.println("Directions [" + x + "," + y + "] " + Arrays.asList(directions));
-                if (directions.length == 1) {
-                    System.out.println("Exit: single way is " + directions[0]);
-                    return new WayResolver(directions[0], null, x, y);
-                }
-                List<WayResolver> ways = new ArrayList<>(directions.length);
-                for (Direction d : directions) {
-                    WayResolver way = new WayResolver(d, null, x, y);
-                    resolveClosestWayToTheNextWaypoint(x, y, waypointIndex, way, visited);
-                    ways.add(way);
-                }
-                if (!ways.isEmpty()) {
-                    Collections.sort(ways);
-                    System.out.println("Exit: closest way is " + ways.get(0));
-                    if (ways.get(0).direction != dir) {
-                        return ways.get(0);
-                    }
+            log("Directions [" + x + "," + y + "] " + Arrays.asList(directions));
+            if (directions.length == 1) {
+                System.out.println("Exit: single way is " + directions[0]);
+                return new WayResolver(directions[0], null, x, y);
+            }
+            List<WayResolver> ways = new ArrayList<>(directions.length);
+            for (Direction d : directions) {
+                WayResolver way = new WayResolver(d, null, x, y);
+                resolveClosestWayToTheNextWaypoint(x, y, waypointIndex, way, visited);
+                ways.add(way);
+            }
+            if (!ways.isEmpty()) {
+                Collections.sort(ways);
+                log("Exit: closest way is " + ways.get(0));
+                if (ways.get(0).direction != dir) {
+                    return ways.get(0);
                 }
             }
         }
-        System.out.println("Exit: No suitable directions");
+        log("Exit: No suitable directions");
         return null;
     }
 
@@ -1524,55 +1595,56 @@ public final class MyStrategy implements Strategy {
                 + ", dist=" + turn.distanceTo() + ", speed=" + speed);
     }
 
-    public static void main(String[] args) {
-        MyStrategy ms = new MyStrategy();
+    /*
+        public static void main(String[] args) {
+            MyStrategy ms = new MyStrategy();
 
-        int[][] waypoint = new int[][] {
-                {13, 15},
-                {1, 15},
-                {0, 0},
-                {2, 0},
-                {2, 14},
-                {13, 13}
-        };
-        TileType[][] tiles = new TileType[][] {
-                {LEFT_TOP_CORNER, RIGHT_HEADED_T, RIGHT_HEADED_T, RIGHT_HEADED_T, RIGHT_HEADED_T, RIGHT_HEADED_T, RIGHT_HEADED_T, RIGHT_HEADED_T,
-                        RIGHT_HEADED_T, RIGHT_HEADED_T, RIGHT_HEADED_T, RIGHT_HEADED_T, RIGHT_HEADED_T, RIGHT_HEADED_T, RIGHT_HEADED_T, LEFT_BOTTOM_CORNER},
-                {HORIZONTAL, RIGHT_TOP_CORNER, LEFT_HEADED_T, LEFT_HEADED_T, LEFT_HEADED_T, LEFT_HEADED_T, LEFT_HEADED_T, LEFT_HEADED_T, LEFT_HEADED_T,
-                        LEFT_HEADED_T, LEFT_HEADED_T, LEFT_HEADED_T, LEFT_HEADED_T, LEFT_HEADED_T, LEFT_HEADED_T, TOP_HEADED_T},
-                {RIGHT_TOP_CORNER, RIGHT_HEADED_T, RIGHT_HEADED_T, VERTICAL, VERTICAL, VERTICAL, VERTICAL, VERTICAL, VERTICAL, VERTICAL, VERTICAL,
-                        RIGHT_HEADED_T, RIGHT_HEADED_T, VERTICAL, LEFT_BOTTOM_CORNER, HORIZONTAL},
-                {EMPTY, RIGHT_TOP_CORNER, LEFT_HEADED_T, VERTICAL, VERTICAL, VERTICAL, VERTICAL, VERTICAL, VERTICAL, VERTICAL, VERTICAL, LEFT_HEADED_T,
-                        RIGHT_BOTTOM_CORNER, LEFT_TOP_CORNER, TOP_HEADED_T, HORIZONTAL},
-                {EMPTY, EMPTY, EMPTY, EMPTY, EMPTY, EMPTY, EMPTY, EMPTY, EMPTY, EMPTY, EMPTY, EMPTY, EMPTY, BOTTOM_HEADED_T, TOP_HEADED_T, HORIZONTAL},
-                {EMPTY, EMPTY, EMPTY, EMPTY, EMPTY, EMPTY, EMPTY, EMPTY, EMPTY, EMPTY, EMPTY, EMPTY, EMPTY, BOTTOM_HEADED_T, TOP_HEADED_T, HORIZONTAL},
-                {EMPTY, EMPTY, EMPTY, EMPTY, EMPTY, EMPTY, EMPTY, EMPTY, EMPTY, EMPTY, EMPTY, EMPTY, EMPTY, BOTTOM_HEADED_T, RIGHT_BOTTOM_CORNER,
-                        HORIZONTAL},
-                {EMPTY, EMPTY, EMPTY, EMPTY, EMPTY, EMPTY, EMPTY, EMPTY, EMPTY, EMPTY, EMPTY, EMPTY, LEFT_TOP_CORNER, LEFT_HEADED_T, LEFT_BOTTOM_CORNER,
-                        HORIZONTAL},
-                {EMPTY, EMPTY, EMPTY, EMPTY, EMPTY, EMPTY, EMPTY, EMPTY, EMPTY, EMPTY, EMPTY, EMPTY, HORIZONTAL, EMPTY, HORIZONTAL, HORIZONTAL},
-                {EMPTY, EMPTY, EMPTY, EMPTY, EMPTY, EMPTY, EMPTY, EMPTY, EMPTY, EMPTY, EMPTY, EMPTY, RIGHT_TOP_CORNER, RIGHT_HEADED_T, TOP_HEADED_T, HORIZONTAL},
-                {EMPTY, EMPTY, EMPTY, EMPTY, EMPTY, EMPTY, EMPTY, EMPTY, EMPTY, EMPTY, EMPTY, EMPTY, EMPTY, BOTTOM_HEADED_T, TOP_HEADED_T, HORIZONTAL},
-                {EMPTY, EMPTY, EMPTY, EMPTY, EMPTY, EMPTY, EMPTY, EMPTY, EMPTY, EMPTY, EMPTY, EMPTY, EMPTY, BOTTOM_HEADED_T, TOP_HEADED_T, HORIZONTAL},
-                {EMPTY, EMPTY, EMPTY, EMPTY, EMPTY, EMPTY, EMPTY, EMPTY, EMPTY, EMPTY, EMPTY, EMPTY, EMPTY, BOTTOM_HEADED_T, TOP_HEADED_T, HORIZONTAL},
-                {EMPTY, EMPTY, EMPTY, EMPTY, EMPTY, EMPTY, EMPTY, EMPTY, EMPTY, EMPTY, EMPTY, EMPTY, LEFT_TOP_CORNER, LEFT_HEADED_T, RIGHT_BOTTOM_CORNER,
-                        HORIZONTAL},
-                {EMPTY, EMPTY, EMPTY, EMPTY, EMPTY, EMPTY, EMPTY, EMPTY, EMPTY, EMPTY, EMPTY, EMPTY, BOTTOM_HEADED_T, VERTICAL, RIGHT_HEADED_T,
-                        RIGHT_BOTTOM_CORNER},
-                {EMPTY, EMPTY, EMPTY, EMPTY, EMPTY, EMPTY, EMPTY, EMPTY, EMPTY, EMPTY, EMPTY, EMPTY, RIGHT_TOP_CORNER, VERTICAL, RIGHT_BOTTOM_CORNER, EMPTY},
-        };
+            int[][] waypoint = new int[][] {
+                    {13, 15},
+                    {1, 15},
+                    {0, 0},
+                    {2, 0},
+                    {2, 14},
+                    {13, 13}
+            };
+            TileType[][] tiles = new TileType[][] {
+                    {LEFT_TOP_CORNER, RIGHT_HEADED_T, RIGHT_HEADED_T, RIGHT_HEADED_T, RIGHT_HEADED_T, RIGHT_HEADED_T, RIGHT_HEADED_T, RIGHT_HEADED_T,
+                            RIGHT_HEADED_T, RIGHT_HEADED_T, RIGHT_HEADED_T, RIGHT_HEADED_T, RIGHT_HEADED_T, RIGHT_HEADED_T, RIGHT_HEADED_T, LEFT_BOTTOM_CORNER},
+                    {HORIZONTAL, RIGHT_TOP_CORNER, LEFT_HEADED_T, LEFT_HEADED_T, LEFT_HEADED_T, LEFT_HEADED_T, LEFT_HEADED_T, LEFT_HEADED_T, LEFT_HEADED_T,
+                            LEFT_HEADED_T, LEFT_HEADED_T, LEFT_HEADED_T, LEFT_HEADED_T, LEFT_HEADED_T, LEFT_HEADED_T, TOP_HEADED_T},
+                    {RIGHT_TOP_CORNER, RIGHT_HEADED_T, RIGHT_HEADED_T, VERTICAL, VERTICAL, VERTICAL, VERTICAL, VERTICAL, VERTICAL, VERTICAL, VERTICAL,
+                            RIGHT_HEADED_T, RIGHT_HEADED_T, VERTICAL, LEFT_BOTTOM_CORNER, HORIZONTAL},
+                    {EMPTY, RIGHT_TOP_CORNER, LEFT_HEADED_T, VERTICAL, VERTICAL, VERTICAL, VERTICAL, VERTICAL, VERTICAL, VERTICAL, VERTICAL, LEFT_HEADED_T,
+                            RIGHT_BOTTOM_CORNER, LEFT_TOP_CORNER, TOP_HEADED_T, HORIZONTAL},
+                    {EMPTY, EMPTY, EMPTY, EMPTY, EMPTY, EMPTY, EMPTY, EMPTY, EMPTY, EMPTY, EMPTY, EMPTY, EMPTY, BOTTOM_HEADED_T, TOP_HEADED_T, HORIZONTAL},
+                    {EMPTY, EMPTY, EMPTY, EMPTY, EMPTY, EMPTY, EMPTY, EMPTY, EMPTY, EMPTY, EMPTY, EMPTY, EMPTY, BOTTOM_HEADED_T, TOP_HEADED_T, HORIZONTAL},
+                    {EMPTY, EMPTY, EMPTY, EMPTY, EMPTY, EMPTY, EMPTY, EMPTY, EMPTY, EMPTY, EMPTY, EMPTY, EMPTY, BOTTOM_HEADED_T, RIGHT_BOTTOM_CORNER,
+                            HORIZONTAL},
+                    {EMPTY, EMPTY, EMPTY, EMPTY, EMPTY, EMPTY, EMPTY, EMPTY, EMPTY, EMPTY, EMPTY, EMPTY, LEFT_TOP_CORNER, LEFT_HEADED_T, LEFT_BOTTOM_CORNER,
+                            HORIZONTAL},
+                    {EMPTY, EMPTY, EMPTY, EMPTY, EMPTY, EMPTY, EMPTY, EMPTY, EMPTY, EMPTY, EMPTY, EMPTY, HORIZONTAL, EMPTY, HORIZONTAL, HORIZONTAL},
+                    {EMPTY, EMPTY, EMPTY, EMPTY, EMPTY, EMPTY, EMPTY, EMPTY, EMPTY, EMPTY, EMPTY, EMPTY, RIGHT_TOP_CORNER, RIGHT_HEADED_T, TOP_HEADED_T, HORIZONTAL},
+                    {EMPTY, EMPTY, EMPTY, EMPTY, EMPTY, EMPTY, EMPTY, EMPTY, EMPTY, EMPTY, EMPTY, EMPTY, EMPTY, BOTTOM_HEADED_T, TOP_HEADED_T, HORIZONTAL},
+                    {EMPTY, EMPTY, EMPTY, EMPTY, EMPTY, EMPTY, EMPTY, EMPTY, EMPTY, EMPTY, EMPTY, EMPTY, EMPTY, BOTTOM_HEADED_T, TOP_HEADED_T, HORIZONTAL},
+                    {EMPTY, EMPTY, EMPTY, EMPTY, EMPTY, EMPTY, EMPTY, EMPTY, EMPTY, EMPTY, EMPTY, EMPTY, EMPTY, BOTTOM_HEADED_T, TOP_HEADED_T, HORIZONTAL},
+                    {EMPTY, EMPTY, EMPTY, EMPTY, EMPTY, EMPTY, EMPTY, EMPTY, EMPTY, EMPTY, EMPTY, EMPTY, LEFT_TOP_CORNER, LEFT_HEADED_T, RIGHT_BOTTOM_CORNER,
+                            HORIZONTAL},
+                    {EMPTY, EMPTY, EMPTY, EMPTY, EMPTY, EMPTY, EMPTY, EMPTY, EMPTY, EMPTY, EMPTY, EMPTY, BOTTOM_HEADED_T, VERTICAL, RIGHT_HEADED_T,
+                            RIGHT_BOTTOM_CORNER},
+                    {EMPTY, EMPTY, EMPTY, EMPTY, EMPTY, EMPTY, EMPTY, EMPTY, EMPTY, EMPTY, EMPTY, EMPTY, RIGHT_TOP_CORNER, VERTICAL, RIGHT_BOTTOM_CORNER, EMPTY},
+            };
 
-        ms.world = new World(0, 0, 0, tiles.length, tiles[0].length, new Player[0], new Car[0], new Projectile[0], new Bonus[0], new OilSlick[0], "", tiles,
-                waypoint, LEFT);
-        ms.self = new Car(1, 1000, getTileCenter(13), getTileCenter(15), 0, 0, ANGLE_180, 0, 200, 400, 1, 0, true, CarType.BUGGY, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0,
-                0, 1, 15, false);
-        ms.init();
-        long t = System.currentTimeMillis();
-        WayResolver w = ms.getDirectionForClosestWayToTheNextWaypoint(0, 1, UP, 2, 1000);
-        System.out.println(w);
-        System.out.println(t - System.currentTimeMillis());
-    }
-
+            ms.world = new World(0, 0, 0, tiles.length, tiles[0].length, new Player[0], new Car[0], new Projectile[0], new Bonus[0], new OilSlick[0], "", tiles,
+                    waypoint, LEFT);
+            ms.self = new Car(1, 1000, getTileCenter(9), getTileCenter(12), 0, 0, ANGLE_90, 0, 200, 400, 1, 0, true, CarType.BUGGY, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0,
+                    0, 13, 13, false);
+            ms.init();
+            long t = System.currentTimeMillis();
+            WayResolver w = ms.getDirectionForClosestWayToTheNextWaypoint(9, 12, DOWN, 5, 1000);
+            System.out.println(w);
+            System.out.println(t - System.currentTimeMillis());
+        }
+    */
     static void log(Object str) {
         //
         System.out.println(str);
