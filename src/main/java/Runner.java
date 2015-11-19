@@ -1,9 +1,9 @@
+import java.io.IOException;
+
 import model.Car;
 import model.Game;
 import model.Move;
 import model.PlayerContext;
-
-import java.io.IOException;
 
 public final class Runner {
     private final RemoteProcessClient remoteProcessClient;
@@ -50,9 +50,7 @@ public final class Runner {
 
                     Move move = new Move();
                     moves[carIndex] = move;
-                    strategies[playerCar.getTeammateIndex()].move(
-                            playerCar, playerContext.getWorld(), game, move
-                            );
+                    strategies[playerCar.getTeammateIndex()].move(playerCar, playerContext.getWorld(), game, move);
                 }
 
                 remoteProcessClient.writeMoves(moves);
