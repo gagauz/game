@@ -1,43 +1,10 @@
-import static java.lang.Math.PI;
-import static java.lang.Math.abs;
-import static java.lang.Math.atan;
-import static java.lang.Math.cos;
-import static java.lang.Math.max;
-import static java.lang.Math.pow;
-import static java.lang.Math.round;
-import static java.lang.Math.signum;
-import static java.lang.Math.sin;
-import static java.lang.Math.sqrt;
-import static java.lang.Math.tan;
-import static model.Direction.DOWN;
-import static model.Direction.LEFT;
-import static model.Direction.RIGHT;
-import static model.Direction.UP;
-import static model.TileType.BOTTOM_HEADED_T;
-import static model.TileType.CROSSROADS;
-import static model.TileType.LEFT_BOTTOM_CORNER;
-import static model.TileType.LEFT_HEADED_T;
-import static model.TileType.LEFT_TOP_CORNER;
-import static model.TileType.RIGHT_BOTTOM_CORNER;
-import static model.TileType.RIGHT_HEADED_T;
-import static model.TileType.RIGHT_TOP_CORNER;
-import static model.TileType.TOP_HEADED_T;
+import model.*;
 
-import java.util.ArrayList;
-import java.util.Arrays;
-import java.util.Collections;
-import java.util.Comparator;
-import java.util.List;
+import java.util.*;
 
-import model.Bonus;
-import model.BonusType;
-import model.Car;
-import model.Direction;
-import model.Game;
-import model.Move;
-import model.TileType;
-import model.Unit;
-import model.World;
+import static java.lang.Math.*;
+import static model.Direction.*;
+import static model.TileType.*;
 
 public final class MyStrategy implements Strategy {
 
@@ -45,13 +12,13 @@ public final class MyStrategy implements Strategy {
 
     static double inside_turn_factor = 0;//0..1
     static double outside_turn_factor = 0.5;//0..1
-    static double mobility_factor = 0.000003;
+    static double mobility_factor = 0.000005;
     static double double_turn_mobility_increment = 5;
     static double double_turn_u_speed_decrement = 1.8;
     static double double_turn_z_speed_decrement = 1.0;
     static double double_turn_z_end_angle = 40;
-    static double double_turn_u_end_angle = 120;
-    static double stability_factor = 19;
+    static double double_turn_u_end_angle = 90;
+    static double stability_factor = 20;
     static double turn_max_speed = 18;
     static double turn_max_angular_speed = 0.033;
     static double turn_enter_offset_tiles = 0;
@@ -135,7 +102,7 @@ public final class MyStrategy implements Strategy {
     private static double tile_size;
     double A = 0.0;
     double B = 0.06;
-    double C = 1.30;
+    double C = 1.36;
     double D = 0.9;
     double E = 0.9;
 
@@ -163,7 +130,8 @@ public final class MyStrategy implements Strategy {
     private boolean backwardOn;
     private int tickWait = 0;
 
-    private boolean[][] waypoints;
+    private boolean[][] untouchedWaypoints;
+    private boolean[][] cleared;
 
     class TileXY {
         final int x;
@@ -254,8 +222,6 @@ public final class MyStrategy implements Strategy {
     int wayPointIndex;
     int wayPointX;
     int wayPointY;
-    int oldWayPointX;
-    int oldWayPointY;
 
     //    
 
@@ -279,24 +245,29 @@ public final class MyStrategy implements Strategy {
         return world.getWaypoints()[index];
     }
 
-    void init() {
-        direction = world.getStartingDirection();
-        lastCenterXY = getTileCenter(getCenter(cx, cy));
-        wayPointIndex = 1;
-        oldWayPointX = world.getWaypoints()[0][0];
-        oldWayPointY = world.getWaypoints()[0][1];
-        wayPointX = self.getNextWaypointX();
-        wayPointY = self.getNextWaypointY();
-        insideTurnFactor = inside_turn_factor;
-        waypoints = new boolean[world.getWidth()][world.getHeight()];
-        System.out.println("{");
+    void initWaypoints() {
+        untouchedWaypoints = new boolean[world.getWidth()][world.getHeight()];
         for (int i = 0; i < world.getWaypoints().length; i++) {
             int x = world.getWaypoints()[i][0];
             int y = world.getWaypoints()[i][1];
-            waypoints[x][y] = true;
-            System.out.format("{%d, %d}\n", world.getWaypoints()[i][0], world.getWaypoints()[i][1]);
+            untouchedWaypoints[x][y] = true;
         }
-        System.out.println("}");
+    }
+
+    void init() {
+        direction = world.getStartingDirection();
+        lastCenterXY = getTileCenter(getCenter(cx, cy));
+        wayPointIndex = self.getNextWaypointIndex();
+        wayPointX = self.getNextWaypointX();
+        wayPointY = self.getNextWaypointY();
+        insideTurnFactor = inside_turn_factor;
+
+        cleared = new boolean[world.getWidth()][world.getHeight()];
+        startX = getTileXY(self.getX());
+        startY = getTileXY(self.getY());
+
+        initWaypoints();
+
         //        System.out.println("{");
         //        for (int i = 0; i < world.getTilesXY().length; i++) {
         //            System.out.print("{");
@@ -310,6 +281,9 @@ public final class MyStrategy implements Strategy {
         //        }
         //        System.out.println("}");
     }
+
+    int startX = -1;
+    int startY = -1;
 
     @Override
     public void move(Car self, World world, Game game, Move move) {
@@ -340,19 +314,25 @@ public final class MyStrategy implements Strategy {
 
         if (null == direction) {
             init();
+        } else {
+            if (startX == cx && startY == cy) {
+                cleared = new boolean[world.getWidth()][world.getHeight()];
+            } else {
+                cleared[cx][cy] = true;
+            }
         }
         centerXY = lastCenterXY;
 
         if (cx == wayPointX && cy == wayPointY) {
             log("Waypoint [" + cx + "," + cy + "] cleared.");
-            wayPointIndex++;
-            if (wayPointIndex >= world.getWaypoints().length) {
-                wayPointIndex = 0;
+            wayPointIndex = self.getNextWaypointIndex();
+            if (wayPointIndex == 1) {
+                initWaypoints();
             }
-            oldWayPointX = wayPointX;
-            oldWayPointY = wayPointY;
+            untouchedWaypoints[cx][cy] = false;
             wayPointX = world.getWaypoints()[wayPointIndex][0];
             wayPointY = world.getWaypoints()[wayPointIndex][1];
+
         }
 
         double speed0 = sqrt(pow(self.getSpeedX(), 2) + pow(self.getSpeedY(), 2));
@@ -363,6 +343,10 @@ public final class MyStrategy implements Strategy {
 
         if (null != currentTurn) {
             currentTurn.distance = self.getDistanceTo(currentTurn.x, currentTurn.y);
+        }
+
+        if (null != pathFinder) {
+            pathFinder.distance = self.getDistanceTo(getTileCenter(pathFinder.x), getTileCenter(pathFinder.y));
         }
 
         if (world.getTick() > game.getInitialFreezeDurationTicks()) {
@@ -388,6 +372,10 @@ public final class MyStrategy implements Strategy {
 
         lastSpeedX = self.getSpeedX();
         lastSpeedY = self.getSpeedY();
+
+        if (null != pathFinder && pathFinder.x == cx && pathFinder.y == cy && pathFinder.direction == direction) {
+            pathFinder = null;
+        }
 
         //        log("X=" + self.getX() + ", Y=" + self.getY() + ", A=" + self.getAngle() + ", Vx=" + self.getSpeedX() + ", Vy=" + self.getSpeedY());
         //        if (speed > maxSpeed) {
@@ -441,6 +429,8 @@ public final class MyStrategy implements Strategy {
         return max(tile_size / 2, A * speed / turnMaxSpeed + B * offsetSide + C * tile_size);
     }
 
+    PathFinder pathFinder;
+
     void checkTurn() {
 
         if (turning)
@@ -448,12 +438,28 @@ public final class MyStrategy implements Strategy {
 
         debugOffsets();
 
-        if (null == currentTurn) {
-            int x = null != lastTurn ? lastTurn.tileX : cx;
-            int y = null != lastTurn ? lastTurn.tileY : cy;
-            currentTurn = findNextTurnFrom(x, y, direction, Integer.MAX_VALUE);
-            if (null != currentTurn) {
-                doubleTurn = findNextTurnFrom(currentTurn.tileX, currentTurn.tileY, currentTurn.direction1, 1);
+        if (null == pathFinder) {
+            int fx = cx;//null == lastTurn ? cx : lastTurn.tileX;
+            int fy = cy;//null == lastTurn ? cy : lastTurn.tileY;
+            pathFinder = getDirectionForClosestWayToTheNextWaypoint(fx, fy, direction, wayPointIndex, Integer.MAX_VALUE);
+        }
+
+        if (null == currentTurn && pathFinder != null) {
+
+            PathFinder path = pathFinder;
+
+            if (null != path) {
+                while (null != path && path.direction == direction) {
+                    log("Replace " + pathFinder + " with " + path.child);
+                    path = path.child;
+                }
+            }
+            if (null != path) {
+                currentTurn = new NextTurn(path.x, path.y, direction, path.direction);
+                pathFinder = pathFinder.child;
+
+                //            currentTurn = findNextTurnFrom(x, y, direction, Integer.MAX_VALUE);
+                //                doubleTurn = findNextTurnFrom(currentTurn.tileX, currentTurn.tileY, currentTurn.direction1, 1);
                 log("Next turn detected: " + currentTurn + " double : " + doubleTurn);
             }
         }
@@ -684,23 +690,6 @@ public final class MyStrategy implements Strategy {
         }
     }
 
-    NextTurn getDoubleTurnAfter(NextTurn turn) {
-        if (null != turn) {
-            int ntX = turn.tileX;
-            int ntY = turn.tileY;
-            Direction ntD = turn.direction1;
-            int[] xy = getNextTileXY(ntX, ntY, 1, ntD);
-            if (isTurnTileType(xy[0], xy[1])) {
-                Direction dtD = resolveDirectionAfterTurn(xy[0], xy[1], ntD);
-                if (dtD != ntD) {
-                    log("Resolve new dir: " + ntD + " -> " + dtD);
-                    return new NextTurn(xy[0], xy[1], ntD, dtD);
-                }
-            }
-        }
-        return null;
-    }
-
     double getOffsetCenter() {
         double offset = getCenter(self.getX(), self.getY()) - centerXY;
         return offset * OFFSET[direction.ordinal()];
@@ -826,10 +815,13 @@ public final class MyStrategy implements Strategy {
     }
 
     boolean isCanUseNitro() {
+        boolean b = abs(abs(getRightAngle()) - abs(self.getAngle())) < ANGLE_1 * 5;
         if (null != currentTurn) {
-            return (currentTurn.distanceTo() > tile_size * 4 && abs(getOffsetAngle()) < ANGLE_5);
+            b = b && currentTurn.distance > tile_size * 4;
+        } else if (null != pathFinder) {
+            b = b && pathFinder.direction == direction && pathFinder.distance > tile_size * 3;
         }
-        return false;
+        return b;
     }
 
     void checkNitro() {
@@ -939,7 +931,7 @@ public final class MyStrategy implements Strategy {
 
         @Override
         public void move() {
-            move.setEnginePower(1.0);
+            move.setEnginePower(0.5);
 
             double delta = abs(abs(self.getAngle()) - abs(turnAngleBegin));
 
@@ -951,11 +943,8 @@ public final class MyStrategy implements Strategy {
             // Установить новое направление
             if (!enteredTurnTile && inside) {
                 enteredTurnTile = true;
-
-            }
-
-            if (enteredTurnTile) {
                 direction = currentTurn.direction1;
+                pathFinder = getDirectionForClosestWayToTheNextWaypoint(currentTurn.tileX, currentTurn.tileY, direction, wayPointIndex, Integer.MAX_VALUE);
             }
 
             //            if (enteredTurnTile && null == doubleTurn) {
@@ -974,13 +963,6 @@ public final class MyStrategy implements Strategy {
                 delegate = null;
                 turning = false;
                 insideTurnFactor = inside_turn_factor;
-                if (!inside && isTurnTileType(cx, cy)) {
-                    Direction dir = resolveDirectionAfterTurn(cx, cy, direction);
-                    if (dir != direction) {
-                        log("Resolve new dir: " + direction + " -> " + dir);
-                        currentTurn = new NextTurn(cx, cy, direction, dir);
-                    }
-                }
                 return;
             } else {
                 //                double w = (turn_max_angular_speed - abs(self.getAngularSpeed())) / turn_max_angular_speed;
@@ -1076,188 +1058,35 @@ public final class MyStrategy implements Strategy {
         return direction == DOWN;
     }
 
-    Direction resolveDirectionAfterTurn(int x, int y, Direction dir) {
-
-        TileType nextTile = world.getTilesXY()[x][y];
-
-        if (null != nextTile) {
-            if (nextTile == LEFT_TOP_CORNER) {
-                if (UP == dir) {
-                    return RIGHT;
-                }
-                if (LEFT == dir) {
-                    return DOWN;
-                }
-            }
-
-            if (nextTile == RIGHT_TOP_CORNER) {
-                if (RIGHT == dir) {
-                    return DOWN;
-                }
-                if (UP == dir) {
-                    return LEFT;
-                }
-            }
-
-            if (nextTile == RIGHT_BOTTOM_CORNER) {
-                if (DOWN == dir) {
-                    return LEFT;
-                }
-                if (RIGHT == dir) {
-                    return UP;
-                }
-            }
-
-            if (nextTile == LEFT_BOTTOM_CORNER) {
-                if (LEFT == dir) {
-                    return UP;
-                }
-                if (DOWN == dir) {
-                    return RIGHT;
-                }
-            }
-
-            //            int oldWayPointX = self.getNextWaypointX();
-            //            int oldWayPointY = self.getNextWaypointY();
-
-            int[] wps = getNextWayPointXYFromIndex(wayPointIndex);
-            int wpX = self.getNextWaypointX();
-            int wpY = self.getNextWaypointY();
-            int wpX1 = cx == oldWayPointX ? self.getNextWaypointX() : oldWayPointX;
-            int wpX2 = cx == oldWayPointX ? wps[0] : self.getNextWaypointX();
-            int wpY1 = cy == oldWayPointY ? self.getNextWaypointY() : oldWayPointY;
-            int wpY2 = cy == oldWayPointY ? wps[1] : self.getNextWaypointY();
-
-            if (nextTile == BOTTOM_HEADED_T) {
-                if (UP == dir) {
-                    log("UP == dir");
-                    log("wpX2 > wpX1 ? RIGHT : LEFT");
-                    return wpX2 > wpX1 ? RIGHT : LEFT;
-                }
-
-                if (wpY != y || (dir == LEFT && x <= wpX) || (dir == RIGHT && x >= wpX)) {
-
-                    if (wpY2 == wpY1) {
-                        if (LEFT == dir && wpX1 < wpX2) {
-                            log("LEFT == dir && wpX1 < wpX2");
-                            return DOWN;
-                        }
-                        if (RIGHT == dir && wpX1 > wpX2) {
-                            log("RIGHT == dir && wpX1 > wpX2");
-                            return DOWN;
-                        }
-                    }
-
-                    if ((LEFT == dir || RIGHT == dir) && wpY2 > wpY1) {
-                        log("(LEFT == dir || RIGHT == dir) && wpY2 > wpY1");
-                        return DOWN;
-                    }
-                }
-
-            }
-            if (nextTile == TOP_HEADED_T) {
-                if (DOWN == dir) {
-                    log("DOWN == dir");
-                    log("wpX1 < wpX2 ? RIGHT : LEFT");
-                    return wpX1 < wpX2 ? RIGHT : LEFT;
-                }
-
-                if (wpY != y || (dir == LEFT && x <= wpX) || (dir == RIGHT && x >= wpX)) {
-                    if (wpY2 == wpY1) {
-                        if (LEFT == dir && wpX1 < wpX2) {
-                            log("LEFT == dir && wpX1 < wpX2");
-                            return UP;
-                        }
-                        if (RIGHT == dir && wpX1 > wpX2) {
-                            log("RIGHT == dir && wpX1 > wpX2");
-                            return UP;
-                        }
-                    }
-
-                    if (LEFT == dir && wpY1 > wpY2) {
-                        log("(LEFT == dir || RIGHT == dir) && wpY1 > wpY2");
-                        return UP;
-                    }
-
-                    if ((LEFT == dir || RIGHT == dir) && wpY1 > wpY2) {
-                        log("(LEFT == dir || RIGHT == dir) && wpY1 > wpY2");
-                        return UP;
-                    }
-                }
-            }
-            if (nextTile == LEFT_HEADED_T) {
-                if (RIGHT == dir) {
-                    log("RIGHT == dir");
-                    log("wpY1 < wpY2 ? DOWN : UP");
-                    return wpY1 < wpY2 ? DOWN : UP;
-                }
-
-                if (wpX1 == wpX2) {
-                    if (UP == dir && wpY1 < wpY2) {
-                        log("UP == dir && wpY1 < wpY2");
-                        return LEFT;
-                    }
-                    if (DOWN == dir && wpY1 > wpY2) {
-                        log("DOWN == dir && wpY1 > wpY2");
-                        return LEFT;
-                    }
-                }
-                if ((UP == dir || DOWN == dir) && wpX1 > wpX2) {
-                    log("(UP == dir || DOWN == dir) && wpX1 > wpX2");
-                    return LEFT;
-                }
-            }
-            if (nextTile == RIGHT_HEADED_T) {
-                if (LEFT == dir) {
-                    log("LEFT == dir");
-                    log("wpY1 < wpY2 ? DOWN : UP");
-                    return wpY1 < wpY2 ? DOWN : UP;
-                }
-                if (wpX1 == wpX2) {
-                    if (UP == dir && wpY1 < wpY2) {
-                        log("UP == dir && wpY1 < wpY2");
-                        return LEFT;
-                    }
-                    if (DOWN == dir && wpY1 > wpY2) {
-                        log("DOWN == dir && wpY1 > wpY2");
-                        return LEFT;
-                    }
-                }
-                if ((UP == dir || DOWN == dir) && wpX1 < wpX2) {
-                    log("(UP == dir || DOWN == dir) && wpX1 < wpX2");
-                    return RIGHT;
-                }
-            }
-
-        }
-
-        return direction;
-    }
-
     Direction[][][] DIRECTION_MATRIX = new Direction[][][] {
-            //E     V      H        LTC      RTC      LBC      RBC     LHT           RHT            THT            BHT            C
-            {null, null, {LEFT}, {DOWN}, null, {UP}, null, null, {UP, DOWN}, {LEFT, UP}, {LEFT, DOWN}, {LEFT, UP, DOWN}},//L
-            {null, null, {RIGHT}, null, {DOWN}, null, {UP}, {UP, DOWN}, null, {RIGHT, UP}, {RIGHT, DOWN}, {RIGHT, UP, DOWN}},//R
-            {null, {UP}, null, {RIGHT}, {LEFT}, null, null, {UP, LEFT}, {UP, RIGHT}, null, {LEFT, RIGHT}, {UP, LEFT, RIGHT}},//U
-            {null, {DOWN}, null, null, null, {RIGHT}, {LEFT}, {DOWN, LEFT}, {DOWN, RIGHT}, {LEFT, RIGHT}, null, {DOWN, LEFT, RIGHT}}//D
+            //E     V      H        LTC      RTC      LBC      RBC     LHT           RHT            THT            BHT            C        U
+            {null, null, {LEFT}, {DOWN}, null, {UP}, null, null, {UP, DOWN}, {LEFT, UP}, {LEFT, DOWN}, {LEFT, UP, DOWN}, {LEFT}},//L
+            {null, null, {RIGHT}, null, {DOWN}, null, {UP}, {UP, DOWN}, null, {RIGHT, UP}, {RIGHT, DOWN}, {RIGHT, UP, DOWN}, {RIGHT}},//R
+            {null, {UP}, null, {RIGHT}, {LEFT}, null, null, {UP, LEFT}, {UP, RIGHT}, null, {LEFT, RIGHT}, {UP, LEFT, RIGHT}, {UP}},//U
+            {null, {DOWN}, null, null, null, {RIGHT}, {LEFT}, {DOWN, LEFT}, {DOWN, RIGHT}, {LEFT, RIGHT}, null, {DOWN, LEFT, RIGHT}, {DOWN}}//D
     };
 
     static int branchIndex = 0;
 
-    class WayResolver implements Comparable<WayResolver> {
+    class PathFinder implements Comparable<PathFinder> {
 
-        WayResolver parent;
+        double distance;
+        PathFinder child;
+        PathFinder parent;
         Direction direction;
         int turnCount = 0;
         int x;
         int y;
+        int wpx;
+        int wpy;
         int branch;
         public boolean waypoint;
         public boolean invalid;
         public boolean exited;
+        public boolean cycle;
 
         // For debug
-        WayResolver(Direction dir, WayResolver par, int x, int y) {
+        PathFinder(Direction dir, PathFinder par, int x, int y, int[] wp) {
             this.branch = ++branchIndex;
             this.direction = dir;
             this.parent = par;
@@ -1268,6 +1097,8 @@ public final class MyStrategy implements Strategy {
             }
             this.x = x;
             this.y = y;
+            this.wpx = wp[0];
+            this.wpy = wp[1];
             System.out.println("New " + this);
         }
 
@@ -1275,36 +1106,61 @@ public final class MyStrategy implements Strategy {
             return turnCount;
         }
 
-        void markInvalid() {
-            if (null != parent) {
-                parent.markInvalid();
+        void selectChild(PathFinder child) {
+            this.turnCount = child.turnCount;
+            if (child.invalid) {
+                this.invalid = true;
             }
-            invalid = true;
+            if (child.cycle) {
+                this.cycle = true;
+            }
+            if (child.exited) {
+                this.exited = true;
+            }
+            if (child.waypoint) {
+                this.waypoint = true;
+            }
+            this.child = child;
         }
 
-        void markWaypoint() {
-            if (null != parent) {
-                parent.markWaypoint();
+        public PathFinder selectChild(List<PathFinder> children) {
+            Collections.sort(children);
+            for (PathFinder child : children) {
+                if (!child.exited) {
+                    selectChild(child);
+                    return child;
+                }
             }
-            waypoint = true;
+            return null;
         }
 
         @Override
-        public int compareTo(WayResolver o) {
-            if (waypoint) {
-                return -1;
+        public int compareTo(PathFinder o) {
+            if (waypoint != o.waypoint) {
+                return waypoint ? -1 : 1;
             }
-            if (invalid || exited) {
-                return 1;
+            if (invalid != o.invalid) {
+                return invalid ? 1 : -1;
             }
-            return turnCount - o.turnCount;
+            if (cycle != o.cycle) {
+                return cycle ? 1 : -1;
+            }
+            if (turnCount != o.turnCount) {
+                return turnCount - o.turnCount;
+            }
+
+            return 0;
         }
 
         @Override
         public String toString() {
             return "Way <" + (null != parent ? parent.branch + "->" : "") + branch + ", " + direction + " [" + x + "," + y + "] count=" + turnCount
-                    + ", invalid=" + invalid + ", waypoint=" + waypoint + ">";
+                    + ", invalid=" + invalid
+                    + ", exited=" + exited
+                    + ", cycled=" + cycle
+                    + ", waypoint=" + waypoint + ">";
         }
+
     }
 
     Direction[] sortDirections(final Direction[] array, final int x, final int y, final int[] waypoint) {
@@ -1333,16 +1189,16 @@ public final class MyStrategy implements Strategy {
         return array2;
     }
 
-    void resolveClosestWayToTheNextWaypoint(int fromX, int fromY, int waypointIndex, WayResolver resolver, boolean[][] visited) {
+    void resolveClosestPathToWaypoint(int fromX, int fromY, int waypointIndex, PathFinder pathFinder, boolean[][] visitedTiles) {
 
-        System.out.println("Enter: " + resolver.direction + " [" + fromX + "," + fromY + "], waypointIndex=" + waypointIndex + " ["
+        System.out.println("Enter: " + pathFinder.direction + " [" + fromX + "," + fromY + "], waypointIndex=" + waypointIndex + " ["
                 + world.getWaypoints()[waypointIndex][0]
                 + "," + world.getWaypoints()[waypointIndex][1] + "]");
 
         //Limit lookup
-        if (resolver.getTurnCount() > 5) {
-            resolver.exited = true;
-            System.out.println("Exit: " + resolver + " Limit reached for " + resolver);
+        if (pathFinder.getTurnCount() > 6) {
+            pathFinder.invalid = true;
+            log("Exit: " + pathFinder + " limit reached for " + pathFinder);
             return;
         }
 
@@ -1352,8 +1208,12 @@ public final class MyStrategy implements Strategy {
         //            return;
         //        }
 
+        if (cleared[fromX][fromY]) {
+            pathFinder.cycle = true;
+        }
+
         final int[] nextWaypoints = world.getWaypoints()[waypointIndex];
-        final Direction fromDir = resolver.direction;
+        final Direction fromDir = pathFinder.direction;
 
         int dX = NEXT_TURN_DELTAS[fromDir.ordinal()][0];
         int dY = NEXT_TURN_DELTAS[fromDir.ordinal()][1];
@@ -1371,60 +1231,44 @@ public final class MyStrategy implements Strategy {
 
             if (x == nextWaypoints[0] && y == nextWaypoints[1]) {
                 //If fouded at least 2 waypoints, stop
-                log("Exit: " + resolver + " Waypoint founded, exit this way");
-                resolver.waypoint = true;
+                pathFinder.waypoint = true;
+                log("Exit: " + pathFinder + " Waypoint founded, exit this way");
                 return;
-            } else if (waypoints[x][y]) {
+            } else if (untouchedWaypoints[x][y]) {
                 // Exclude path that leads to waypoints out off order
-                log("Exit: " + resolver + " Invalid waypoint founded, exit this way");
-                resolver.exited = true;
-                return;
+                //                pathFinder.exited = true;
+                //                log("Exit: " + pathFinder + " Invalid waypoint founded, exit this way");
+                //                return;
             }
 
             if (directions.length == 1 && fromDir == directions[0]) {
                 continue;
             }
 
-            if (!visited[x][y]) {
-                visited[x][y] = true;
+            if (!visitedTiles[x][y]) {
+                visitedTiles[x][y] = true;
 
                 if (null != directions) {
                     log("Directions [" + x + "," + y + "] " + Arrays.asList(directions));
                     if (directions.length == 1) {
-                        WayResolver way = new WayResolver(directions[0], resolver, x, y);
-                        resolveClosestWayToTheNextWaypoint(x, y, waypointIndex, way, visited);
-                        log("Exit: " + resolver + " single way is " + way);
-                        resolver.turnCount = way.turnCount;
-                        if (way.invalid) {
-                            resolver.invalid = true;
-                        }
-                        if (way.exited) {
-                            resolver.exited = true;
-                        }
-                        if (way.waypoint) {
-                            resolver.waypoint = true;
-                        }
+                        PathFinder way = new PathFinder(directions[0], pathFinder, x, y, nextWaypoints);
+                        resolveClosestPathToWaypoint(x, y, waypointIndex, way, visitedTiles);
+                        pathFinder.selectChild(way);
+                        log("Exit: " + pathFinder + " with single child " + way);
+                        return; //?
                     } else {
                         //                        Direction[] directions2 = sortDirections(directions, x, y, nextWaypoints);
-                        List<WayResolver> ways = new ArrayList<>(directions.length);
+                        List<PathFinder> ways = new ArrayList<>(directions.length);
                         for (Direction d : directions) {
-                            WayResolver wr = new WayResolver(d, resolver, x, y);
-                            resolveClosestWayToTheNextWaypoint(x, y, waypointIndex, wr, visited);
-                            if (!wr.exited)
-                                ways.add(wr);
+                            PathFinder finder = new PathFinder(d, pathFinder, x, y, nextWaypoints);
+                            resolveClosestPathToWaypoint(x, y, waypointIndex, finder, visitedTiles);
+                            ways.add(finder);
                         }
-                        if (!ways.isEmpty()) {
-                            Collections.sort(ways);
-                            log("Exit: " + resolver + " closest way is " + ways.get(0));
-                            resolver.turnCount = ways.get(0).turnCount;
-                            if (ways.get(0).invalid) {
-                                resolver.invalid = true;
-                            }
-                            if (ways.get(0).waypoint) {
-                                resolver.waypoint = true;
-                            }
-                        }
+                        PathFinder way = pathFinder.selectChild(ways);
+                        log("Exit: " + pathFinder + " with selected child " + way);
+                        return; //?
                     }
+
                 }
             } else {
                 log("Skip: [" + x + "," + y + "] is visited");
@@ -1432,12 +1276,13 @@ public final class MyStrategy implements Strategy {
                 //return;
             }
         }
-        resolver.exited = true;
-        log("Exit: " + resolver + " No suitable directions");
+        pathFinder.exited = true;
+        log("Exit: " + pathFinder + " No suitable directions");
     }
 
-    WayResolver getDirectionForClosestWayToTheNextWaypoint(int fromX, int fromY, Direction dir, int waypointIndex, int limit) {
+    PathFinder getDirectionForClosestWayToTheNextWaypoint(int fromX, int fromY, Direction dir, int waypointIndex, int limit) {
 
+        branchIndex = 0;
         int[] nextWaypoints = world.getWaypoints()[waypointIndex];
 
         log("Enter: " + dir + " [" + fromX + "," + fromY + "], waypointIndex=" + waypointIndex + " ["
@@ -1449,20 +1294,20 @@ public final class MyStrategy implements Strategy {
         int maxX = world.getWidth();
         int maxY = world.getHeight();
 
-        boolean[][] visited = new boolean[world.getWidth()][world.getHeight()];
-        visited[fromX][fromY] = true;
+        boolean[][] visitedTiles = new boolean[world.getWidth()][world.getHeight()];
+        visitedTiles[fromX][fromY] = true;
 
         for (int x = fromX + dX, y = fromY + dY, c = 0; x < maxX && y < maxY && x > -1 && y > -1 && c < limit; x = x + dX, y = y + dY, c++) {
 
             final TileType tile = world.getTilesXY()[x][y];
             log("Tile [" + x + "," + y + "] " + tile);
-            final Direction[] directions = DIRECTION_MATRIX[dir.ordinal()][tile.ordinal()];
+            Direction[] directions = DIRECTION_MATRIX[dir.ordinal()][tile.ordinal()];
 
             if (null == directions) {
                 break;
             }
 
-            visited[x][y] = true;
+            visitedTiles[x][y] = true;
 
             if (directions.length == 1 && dir == directions[0]) {
                 continue;
@@ -1473,26 +1318,27 @@ public final class MyStrategy implements Strategy {
                 if (waypointIndex == world.getWaypoints().length) {
                     waypointIndex = 0;
                 }
+                nextWaypoints = world.getWaypoints()[waypointIndex];
                 log("Enter waypoint, increment. next is " + waypointIndex);
             }
 
             log("Directions [" + x + "," + y + "] " + Arrays.asList(directions));
             if (directions.length == 1) {
                 System.out.println("Exit: single way is " + directions[0]);
-                return new WayResolver(directions[0], null, x, y);
+                return new PathFinder(directions[0], null, x, y, nextWaypoints);
             }
-            List<WayResolver> ways = new ArrayList<>(directions.length);
+            List<PathFinder> ways = new ArrayList<>(directions.length);
             for (Direction d : directions) {
-                WayResolver way = new WayResolver(d, null, x, y);
-                resolveClosestWayToTheNextWaypoint(x, y, waypointIndex, way, visited);
-                ways.add(way);
+                PathFinder finder = new PathFinder(d, null, x, y, nextWaypoints);
+                resolveClosestPathToWaypoint(x, y, waypointIndex, finder, visitedTiles);
+                if (!finder.exited) {
+                    ways.add(finder);
+                }
             }
             if (!ways.isEmpty()) {
                 Collections.sort(ways);
                 log("Exit: closest way is " + ways.get(0));
-                if (ways.get(0).direction != dir) {
-                    return ways.get(0);
-                }
+                return ways.get(0);
             }
         }
         log("Exit: No suitable directions");
@@ -1507,14 +1353,14 @@ public final class MyStrategy implements Strategy {
             {0, 1},//D
     };
 
-    NextTurn findNextTurnFrom(int fromX, int fromY, Direction dir, int limit) {
-
-        WayResolver way = getDirectionForClosestWayToTheNextWaypoint(fromX, fromY, dir, wayPointIndex, limit);
-        if (null != way) {
-            return new NextTurn(way.x, way.y, dir, way.direction);
-        }
-        return null;
-    }
+    //    NextTurn findNextTurnFrom(int fromX, int fromY, Direction dir, int limit) {
+    //
+    //        PathFinder way = getDirectionForClosestWayToTheNextWaypoint(fromX, fromY, dir, wayPointIndex, limit);
+    //        if (null != way) {
+    //            return new NextTurn(way.x, way.y, dir, way.direction);
+    //        }
+    //        return null;
+    //    }
 
     TileType getTile(double x, double y) {
         return world.getTilesXY()[getTileXY(x)][getTileXY(y)];
