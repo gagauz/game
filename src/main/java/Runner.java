@@ -29,7 +29,7 @@ public final class Runner {
             remoteProcessClient.writeProtocolVersion();
             Game game = remoteProcessClient.readGameContext();
 
-            Strategy[] strategies = new Strategy[teamSize];
+            MyStrategy[] strategies = new MyStrategy[teamSize];
 
             for (int strategyIndex = 0; strategyIndex < teamSize; ++strategyIndex) {
                 strategies[strategyIndex] = new MyStrategy();
@@ -55,6 +55,8 @@ public final class Runner {
 
                 remoteProcessClient.writeMoves(moves);
             }
+            for (MyStrategy m : strategies)
+                System.out.println(m.speedAvg / m.tickCount);
         } finally {
             remoteProcessClient.close();
         }

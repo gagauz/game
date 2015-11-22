@@ -2,6 +2,7 @@ import static java.lang.Math.PI;
 import static java.lang.Math.abs;
 import static java.lang.Math.atan;
 import static java.lang.Math.cos;
+import static java.lang.Math.max;
 import static java.lang.Math.pow;
 import static java.lang.Math.round;
 import static java.lang.Math.signum;
@@ -22,6 +23,7 @@ import java.util.List;
 import model.Bonus;
 import model.BonusType;
 import model.Car;
+import model.CarType;
 import model.CircularUnit;
 import model.Direction;
 import model.Game;
@@ -37,15 +39,14 @@ public final class MyStrategy implements Strategy {
 
     static double inside_turn_factor = 0.0;//0..1
     static double outside_turn_factor = 1;//0..1
-    static double mobility_factor = 0.50;
+    static double mobility_factor = 0.8;
     static double stability_factor = 7;
-    static double double_turn_u_speed_decrement = 2.9;
-    static double double_turn_z_speed_decrement = 0.8;
+    static double double_turn_u_speed = 7;
     static double turn_end_angle = 95;
     static double double_turn_z_end_angle = 45;
-    static double double_turn_u_end_angle = 180;
+    static double double_turn_u_end_angle = 120;
 
-    static double turn_max_speed = 17;
+    static double turn_max_speed = 18;
     static double turn_max_angular_speed = 0.033;
     static double turn_enter_offset_tiles = 0;
     static double drift_speed = 26;
@@ -129,7 +130,7 @@ public final class MyStrategy implements Strategy {
 
     private static double tile_size = 800;
     double A = 0.0;
-    double B = 0.06;
+    double B = 0.0;
     double C = 1.36;
     double D = 0.9;
     double E = 1.2;
@@ -150,8 +151,8 @@ public final class MyStrategy implements Strategy {
     private double turnAngleBegin;
     private double maxSpeed = max_speed;
     private double turnMaxSpeed = turn_max_speed;
-    private double fireMaxDistance;
-    private double oilMaxDistance;
+    private double fireMaxDistance = 10000;
+    private double oilMaxDistance = 10000;
     private boolean isForward;
     private boolean isBackward;
     private boolean backwardOn;
@@ -220,6 +221,7 @@ public final class MyStrategy implements Strategy {
 
     private NextTurn currentTurn;
     private NextTurn doubleTurn;
+    private int doubleTurnUFinished;
     private double moveBackBeginX;
     private double moveBackBeginY;
     private double speed;
@@ -282,7 +284,6 @@ public final class MyStrategy implements Strategy {
 
     void init() {
         direction = world.getStartingDirection();
-        currentCenterAxisXY = getTileCenter(getCenter(cx, cy));
         wayPointIndex = self.getNextWaypointIndex();
         wayPointX = self.getNextWaypointX();
         wayPointY = self.getNextWaypointY();
@@ -307,6 +308,16 @@ public final class MyStrategy implements Strategy {
         //        }
         //        System.out.println("}");
 
+        tile_size = (int) game.getTrackTileSize();
+
+        staleMoveDelay = (int) (1.0 / game.getCarWheelTurnChangePerTick());
+        margins = game.getTrackTileMargin();
+        fromCenterToBorder = tile_size / 2 - margins;
+        fromCenterToBorderWithWidth = fromCenterToBorder - self.getHeight() / 2;
+        fireMaxDistance = tile_size * 3;
+        oilMaxDistance = tile_size * 12;
+        turn_max_speed = turn_max_speed;/// (mass_factor * self.getMass());
+        drift_speed = drift_speed / (mass_factor * self.getMass());
     }
 
     int startX = -1;
@@ -320,34 +331,22 @@ public final class MyStrategy implements Strategy {
         this.game = game;
         this.move = move;
 
-        if (0 == tile_size) {
-            tile_size = (int) game.getTrackTileSize();
-
-            staleMoveDelay = (int) (1.0 / game.getCarWheelTurnChangePerTick());
-            margins = game.getTrackTileMargin();
-            fromCenterToBorder = tile_size / 2 - margins;
-            fromCenterToBorderWithWidth = fromCenterToBorder - self.getHeight() / 2;
-            fireMaxDistance = tile_size * 1.5;
-            oilMaxDistance = tile_size * 8;
-            turn_max_speed = turn_max_speed;/// (mass_factor * self.getMass());
-            drift_speed = drift_speed / (mass_factor * self.getMass());
+        if (null == direction) {
+            init();
         }
-
         turnEnterOffset = tile_size * turn_enter_offset_tiles;
 
         cx = getTileXY(self.getX());
         cy = getTileXY(self.getY());
         ctile = world.getTilesXY()[cx][cy];
 
-        if (null == direction) {
-            init();
+        if (startX == cx && startY == cy) {
+            cleared = new boolean[world.getWidth()][world.getHeight()];
         } else {
-            if (startX == cx && startY == cy) {
-                cleared = new boolean[world.getWidth()][world.getHeight()];
-            } else {
-                cleared[cx][cy] = true;
-            }
+            cleared[cx][cy] = true;
         }
+
+        currentCenterAxisXY = getTileCenter(getCenter(cx, cy));
         centerXY = currentCenterAxisXY;
 
         if (cx == wayPointX && cy == wayPointY) {
@@ -457,18 +456,19 @@ public final class MyStrategy implements Strategy {
 
     double getTurnDelay() {
 
-        double offcenter = getAxis(self.getX(), self.getY()) - currentCenterAxisXY;
-        offcenter = offcenter * TURN_OFFSET_OUT[direction.ordinal()][currentTurn.direction1.ordinal()];
-
-        double offangle = getRightAngle() - self.getAngle();
-
-        double start = (A * speed / turnMaxSpeed
-                + B * offcenter / fromCenterToBorder + C) * tile_size;
+        double start = max(tile_size / 2, A * speed / turnMaxSpeed + C * tile_size);
         if (speed > drift_speed) {
             start = speed / drift_speed * turnEnterOffset;
         } else if (null != doubleTurn) {
-            start = doubleTurn.direction1 != currentTurn.direction0 ? turnEnterOffset * D : turnEnterOffset * E;
+            start = doubleTurn.direction1 != direction ? turnEnterOffset * D : turnEnterOffset * E;
         }
+
+        double offset = (getAxis(self.getX(), self.getY()) - currentCenterAxisXY)
+                * TURN_OFFSET_OUT[direction.ordinal()][currentTurn.direction1.ordinal()];
+
+        if (offset < 0)
+            start = tile_size / 2 + start * abs((fromCenterToBorderWithWidth + offset) / fromCenterToBorderWithWidth);
+
         return start;
     }
 
@@ -634,7 +634,7 @@ public final class MyStrategy implements Strategy {
                                 + " self.y=" + self.getY()
                                 + " correction=" + aCorner);
                         //                        a2 = (a2);
-                        aCorner = -currentTurn.turnDirection;
+                        aCorner = -0.5 * currentTurn.turnDirection;
                     }
                 }
             } else {
@@ -643,7 +643,7 @@ public final class MyStrategy implements Strategy {
                 double a = currentTurn.turnDirection * self.getAngleTo(x, y);
                 d1 = self.getDistanceTo(x, y);
                 if (d1 < tile_size / 1.5) {
-                    if (a > -ANGLE_1 * 8) {
+                    if (a > -ANGLE_1 * 15) {
                         log("Avoid outside corner x=" + x + ", y=" + y + ", a=" + aCorner + ", d=" + d1
                                 + " self.x=" + self.getX()
                                 + " self.y=" + self.getY()
@@ -751,7 +751,7 @@ public final class MyStrategy implements Strategy {
                     double distToBonus = getDistanceTo(b);
 
                     if (distToBonus > tile_size
-                            && abs(getAxis(self) - getAxis(b)) < fromCenterToBorderWithWidth
+                            && abs(getAxis(self) - getAxis(b)) < fromCenterToBorder
                             && abs(bonusOffCenter) < fromCenterToBorder
                             && (null == currentTurn || distToBonus < currentTurn.distance - tile_size)) {
                         if (distToBonus < closestXY && (null == bonus || bonus.getType() != BonusType.PURE_SCORE || bonus.getType() != BonusType.REPAIR_KIT)) {
@@ -846,9 +846,9 @@ public final class MyStrategy implements Strategy {
         public void move() {
             move.setEnginePower(1.0);
             checkTurn();
-            checkBrake();
-            avoidCollisions();
             checkStraight();
+            avoidCollisions();
+            checkBrake();
             checkNitro();
             checkDistance();
             checkCanThrowProjectile();
@@ -950,15 +950,29 @@ public final class MyStrategy implements Strategy {
         }
     }
 
+    boolean checkFire(double distance) {
+        for (Car car : world.getCars()) {
+            if (!car.isTeammate()) {
+                if ((self.getType() == CarType.BUGGY && canFire(car))
+                        || (self.getType() == CarType.JEEP && canFireJeep(car))) {
+                    return true;
+                }
+            } else if (car.getId() != self.getId()) {
+                ally = car;
+            }
+        }
+        return false;
+    }
+
     void checkCanThrowProjectile() {
         if (self.getProjectileCount() > 0) {
-            if (checkCloseAngle(0, self.getHeight(), fireMaxDistance)) {
+            if (checkFire(fireMaxDistance)) {
                 move.setThrowProjectile(true);
             }
         }
         if (self.getOilCanisterCount() > 0) {
-            if (null != currentTurn && currentTurn.distance < speed / turnMaxSpeed * tile_size) {
-                if (checkCloseAngle(ANGLE_180, tile_size, oilMaxDistance)) {
+            if (null != currentTurn && currentTurn.distance < 2 * tile_size || (ctile != TileType.HORIZONTAL && ctile != TileType.VERTICAL)) {
+                if (checkCloseAngle(ANGLE_180, ANGLE_90, oilMaxDistance)) {
                     move.setSpillOil(true);
                 }
             }
@@ -995,23 +1009,22 @@ public final class MyStrategy implements Strategy {
         brakeOn = speed > maxSpeed;
         turnMaxSpeed = turn_max_speed;
 
-        if (turning || (null != currentTurn && currentTurn.distanceTo() < 1. * getTurnDelay())) {
-            if (null != doubleTurn) {
-                if (doubleTurn.direction1 != currentTurn.direction0) {
+        if (turning || (null != currentTurn && currentTurn.distanceTo() < 1.36 * tile_size)) {
+            if (doubleTurnUFinished > 0) {
+                turnMaxSpeed = double_turn_u_speed;
+                log("Double turn U max speed " + turnMaxSpeed);
+            } else if (null != doubleTurn && doubleTurn.direction1 != currentTurn.direction0) {
+                turnMaxSpeed = double_turn_u_speed;
+                log("Double turn U max speed " + turnMaxSpeed);
+            } else {
+                turnMaxSpeed = turnMaxSpeed + 1 * self.getDurability();
 
-                    turnMaxSpeed = turn_max_speed / double_turn_u_speed_decrement;
-                    log("Double turn U max speed " + turnMaxSpeed);
-                } else {
-                    turnMaxSpeed = turn_max_speed / double_turn_z_speed_decrement;
-                    log("Double turn Z max speed " + turnMaxSpeed);
-                }
+                double offset = (getAxis(self.getX(), self.getY()) - currentCenterAxisXY)
+                        * TURN_OFFSET_OUT[direction.ordinal()][currentTurn.direction1.ordinal()];
+
+                if (offset < 0)
+                    turnMaxSpeed = turnMaxSpeed / 2 + turnMaxSpeed / 2 * abs((fromCenterToBorderWithWidth + offset) / fromCenterToBorderWithWidth);
             }
-            turnMaxSpeed = turnMaxSpeed + 1 * self.getDurability();
-
-            double offset = (getAxis(self.getX(), self.getY()) - currentCenterAxisXY) * TURN_OFFSET_OUT[direction.ordinal()][currentTurn.direction1.ordinal()];
-
-            if (offset < 0)
-                turnMaxSpeed = turnMaxSpeed * abs((fromCenterToBorderWithWidth - offset) / fromCenterToBorderWithWidth);
             brakeOn = speed > turnMaxSpeed;
 
             log("Brake on speed " + speed + " max speed " + turnMaxSpeed);
@@ -1019,31 +1032,22 @@ public final class MyStrategy implements Strategy {
         if (brakeOn) {
             //            log("Bake ON! " + speed);
             log("Brake on! : " + currentTurn);
-            move.setEnginePower(turnMaxSpeed / speed);
             move.setBrake(true);
         }
     }
 
-    boolean checkCloseAngle(double angle, double spreadWidth, double distance) {
+    boolean checkCloseAngle(double angle, double spread, double distance) {
         for (Car car : world.getCars()) {
             if (!car.isTeammate()) {
                 double d = self.getDistanceTo(car);
-                if (d < distance && abs(abs(angle) - abs(self.getAngleTo(car))) < atan(spreadWidth / 2 / d)) {
+                double a = self.getAngleTo(car);
+                a = a - signum(a) * angle;
+
+                if (d < distance && abs(a) < spread) {
                     return true;
                 }
             } else if (car.getId() != self.getId()) {
                 ally = car;
-            }
-        }
-        return false;
-    }
-
-    boolean checkClose(double distance) {
-        for (Car car : world.getCars()) {
-            if (car.getId() != self.getId()) {
-                if (self.getDistanceTo(car) < distance) {
-                    return true;
-                }
             }
         }
         return false;
@@ -1085,6 +1089,8 @@ public final class MyStrategy implements Strategy {
                 endDeltaAngle = doubleTurn.direction1 == direction
                         ? double_turn_z_end_angle * ANGLE_1
                         : double_turn_u_end_angle * ANGLE_1;
+                if (doubleTurn.direction1 != currentTurn.direction0)
+                    doubleTurnUFinished = 2;
             }
             turnSpeedStart = turnMaxSpeed;
             log("New turn " + this.getClass() + " from angle: " + turnAngleBegin + " to angle: " + endDeltaAngle
@@ -1119,8 +1125,7 @@ public final class MyStrategy implements Strategy {
             }
 
             // exit by off turn tile
-            boolean exitAlways = currentTurn.entered && !inside
-            /* && ((null != pathFinder && pathFinder.direction != direction) || (ctile != TileType.HORIZONTAL && ctile != TileType.VERTICAL))*/;
+            boolean exitAlways = currentTurn.entered && !inside;
 
             if ((currentTurn.entered && delta >= endDeltaAngle) || exitAlways) {
                 log("Turn finished: Angle is " + self.getAngle() + ", delta is " + delta);
@@ -1129,6 +1134,7 @@ public final class MyStrategy implements Strategy {
                 currentCenterAxisXY = getAxis(currentTurn.x, currentTurn.y);
                 currentTurn = null;
                 doubleTurn = null;
+                doubleTurnUFinished--;
                 delegate = null;
                 turning = false;
                 insideTurnFactor = inside_turn_factor;
@@ -1685,4 +1691,56 @@ public final class MyStrategy implements Strategy {
         return new double[] {x, y};
     }
 
+    boolean canFire(Car car) {
+
+        if (car.isTeammate()) {
+            return false;
+        }
+
+        double vx00 = game.getWasherInitialSpeed() * cos(self.getAngle());
+        double vy00 = game.getWasherInitialSpeed() * sin(self.getAngle());
+        double vx01 = game.getWasherInitialSpeed() * cos(self.getAngle() + game.getSideWasherAngle());
+        double vy01 = game.getWasherInitialSpeed() * sin(self.getAngle() + game.getSideWasherAngle());
+        double vx02 = game.getWasherInitialSpeed() * cos(self.getAngle() - game.getSideWasherAngle());
+        double vy02 = game.getWasherInitialSpeed() * sin(self.getAngle() - game.getSideWasherAngle());
+
+        double vx1 = car.getSpeedX();
+        double vy1 = car.getSpeedY();
+
+        double x0 = self.getX();
+        double y0 = self.getY();
+        double x1 = car.getX();
+        double y1 = car.getY();
+
+        double cs = sqrt(pow(vx1, 2) + pow(vy1, 2));
+        double d = cs == 0 ? car.getWidth() / 2 : car.getWidth() / 2 / cs;
+
+        return abs(self.getAngleTo(car)) < ANGLE_1 * 45 && (abs((x1 - x0) / (vx00 - vx1) - (y1 - y0) / (vy00 - vy1)) < d
+                || abs((x1 - x0) / (vx01 - vx1) - (y1 - y0) / (vy01 - vy1)) < d
+                || abs((x1 - x0) / (vx02 - vx1) - (y1 - y0) / (vy02 - vy1)) < d);
+    }
+
+    boolean canFireJeep(Car car) {
+
+        double vx0 = game.getWasherInitialSpeed() * cos(self.getAngle());
+        double vy0 = game.getWasherInitialSpeed() * sin(self.getAngle());
+        double vx01 = game.getWasherInitialSpeed() * cos(self.getAngle() + game.getSideWasherAngle());
+        double vy01 = game.getWasherInitialSpeed() * sin(self.getAngle() + game.getSideWasherAngle());
+        double vx02 = game.getWasherInitialSpeed() * cos(self.getAngle() - game.getSideWasherAngle());
+        double vy02 = game.getWasherInitialSpeed() * sin(self.getAngle() - game.getSideWasherAngle());
+
+        double vx1 = car.getSpeedX();
+        double vy1 = car.getSpeedY();
+
+        double x0 = self.getX();
+        double y0 = self.getY();
+        double x1 = car.getX();
+        double y1 = car.getY();
+
+        double d = car.getWidth() / 2 / sqrt(pow(vx1, 2) + pow(vy1, 2));
+
+        return abs((x1 - x0) / (vx0 - vx1) - (y1 - y0) / (vy0 - vy1)) < d
+                || abs((x1 - x0) / (vx01 - vx1) - (y1 - y0) / (vy01 - vy1)) < d
+                || abs((x1 - x0) / (vx02 - vx1) - (y1 - y0) / (vy02 - vy1)) < d;
+    }
 }
